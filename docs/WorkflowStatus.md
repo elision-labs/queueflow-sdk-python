@@ -1,0 +1,21 @@
+# WorkflowStatus
+
+Lifecycle state of a workflow instance.
+
+## Enum
+
+* `CREATED` (value: `'created'`)
+
+* `RUNNING` (value: `'running'`)
+
+* `COMPLETED` (value: `'completed'`)
+
+* `FAILED` (value: `'failed'`)
+
+* `PARTIALLY_FAILED` (value: `'partially_failed'`)
+
+* `CANCELLED` (value: `'cancelled'`)
+
+[[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+
