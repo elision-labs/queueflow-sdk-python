@@ -8,6 +8,7 @@ Name | Type | Description | Notes
 **has_more** | **bool** |  | 
 **jobs** | [**List[Job]**](Job.md) |  | 
 **limit** | **int** |  | 
+**next_cursor** | **str** | Opaque keyset cursor for the next page (present when &#x60;has_more&#x60;). Pass it back as &#x60;cursor&#x60; to continue where this page ended; cheaper than deep OFFSET paging. | [optional] 
 **offset** | **int** |  | 
 **total** | **int** | Exact total match count. Only present when the request set &#x60;include_total&#x3D;true&#x60;; computing it costs a full count over the filtered set, so it is opt-in. | [optional] 
 

@@ -2,10 +2,10 @@
 name = "queueflow"
 version = "0.1.0"
 description = "QueueFlow API"
-authors = ["QueueFlow <team@openapitools.org>"]
+authors = ["QueueFlow"]
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/GIT_USER_ID/GIT_REPO_ID"
+repository = "https://github.com/queueflow/queueflow-sdk-python"
 keywords = ["OpenAPI", "OpenAPI-Generator", "QueueFlow API"]
 include = ["queueflow/py.typed"]
 
@@ -36,8 +36,8 @@ extension-pkg-whitelist = "pydantic"
 [tool.mypy]
 files = [
   "queueflow",
-  #"test",  # auto-generated tests
-  "tests", # hand-written tests
+  "test",
+  
 ]
 # TODO: enable "strict" once all these individual checks are passing
 # strict = true

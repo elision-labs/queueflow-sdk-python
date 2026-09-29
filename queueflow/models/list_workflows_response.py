@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from queueflow.models.workflow import Workflow
 from typing import Optional, Set
@@ -29,10 +29,11 @@ class ListWorkflowsResponse(BaseModel):
     """ # noqa: E501
     has_more: StrictBool
     limit: StrictInt
+    next_cursor: Optional[StrictStr] = Field(default=None, description="Opaque keyset cursor for the next page (present when `has_more`). Pass it back as `cursor` to continue where this page ended; cheaper than deep OFFSET paging.")
     offset: StrictInt
     total: Optional[StrictInt] = Field(default=None, description="Exact total match count; only present when `include_total=true`.")
     workflows: List[Workflow]
-    __properties: ClassVar[List[str]] = ["has_more", "limit", "offset", "total", "workflows"]
+    __properties: ClassVar[List[str]] = ["has_more", "limit", "next_cursor", "offset", "total", "workflows"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -80,6 +81,11 @@ class ListWorkflowsResponse(BaseModel):
                 if _item_workflows:
                     _items.append(_item_workflows.to_dict())
             _dict['workflows'] = _items
+        # set to None if next_cursor (nullable) is None
+        # and model_fields_set contains the field
+        if self.next_cursor is None and "next_cursor" in self.model_fields_set:
+            _dict['next_cursor'] = None
+
         # set to None if total (nullable) is None
         # and model_fields_set contains the field
         if self.total is None and "total" in self.model_fields_set:
@@ -99,6 +105,7 @@ class ListWorkflowsResponse(BaseModel):
         _obj = cls.model_validate({
             "has_more": obj.get("has_more"),
             "limit": obj.get("limit"),
+            "next_cursor": obj.get("next_cursor"),
             "offset": obj.get("offset"),
             "total": obj.get("total"),
             "workflows": [Workflow.from_dict(_item) for _item in obj["workflows"]] if obj.get("workflows") is not None else None

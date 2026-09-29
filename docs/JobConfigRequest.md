@@ -6,9 +6,13 @@ Optional per-job configuration overrides.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
+**jitter_factor** | **float** | Retry-delay jitter in &#x60;0.0..&#x3D;1.0&#x60; (e.g. &#x60;0.1&#x60; &#x3D; +/-10%). | [optional] 
 **max_retries** | **int** |  | [optional] 
 **priority** | **int** | Higher is claimed first within a queue (ties: oldest first). | [optional] 
 **queue** | **str** | Override the destination queue. | [optional] 
+**retry_backoff** | [**BackoffStrategy**](BackoffStrategy.md) | How retry delays grow between attempts (default exponential). | [optional] 
+**retry_delay_secs** | **int** | Base retry delay, in seconds. | [optional] 
+**retry_max_delay_secs** | **int** | Upper bound on any computed retry delay, in seconds. | [optional] 
 **timeout** | **int** | Per-attempt timeout, in seconds. | [optional] 
 
 ## Example

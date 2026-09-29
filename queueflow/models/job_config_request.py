@@ -17,9 +17,10 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, StrictStr
+from typing import Any, ClassVar, Dict, List, Optional, Union
 from typing_extensions import Annotated
+from queueflow.models.backoff_strategy import BackoffStrategy
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -27,11 +28,15 @@ class JobConfigRequest(BaseModel):
     """
     Optional per-job configuration overrides.
     """ # noqa: E501
+    jitter_factor: Optional[Union[StrictFloat, StrictInt]] = Field(default=None, description="Retry-delay jitter in `0.0..=1.0` (e.g. `0.1` = +/-10%).")
     max_retries: Optional[Annotated[int, Field(strict=True, ge=0)]] = None
     priority: Optional[StrictInt] = Field(default=None, description="Higher is claimed first within a queue (ties: oldest first).")
     queue: Optional[StrictStr] = Field(default=None, description="Override the destination queue.")
+    retry_backoff: Optional[BackoffStrategy] = Field(default=None, description="How retry delays grow between attempts (default exponential).")
+    retry_delay_secs: Optional[Annotated[int, Field(strict=True, ge=0)]] = Field(default=None, description="Base retry delay, in seconds.")
+    retry_max_delay_secs: Optional[Annotated[int, Field(strict=True, ge=0)]] = Field(default=None, description="Upper bound on any computed retry delay, in seconds.")
     timeout: Optional[Annotated[int, Field(strict=True, ge=0)]] = Field(default=None, description="Per-attempt timeout, in seconds.")
-    __properties: ClassVar[List[str]] = ["max_retries", "priority", "queue", "timeout"]
+    __properties: ClassVar[List[str]] = ["jitter_factor", "max_retries", "priority", "queue", "retry_backoff", "retry_delay_secs", "retry_max_delay_secs", "timeout"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -72,6 +77,11 @@ class JobConfigRequest(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # set to None if jitter_factor (nullable) is None
+        # and model_fields_set contains the field
+        if self.jitter_factor is None and "jitter_factor" in self.model_fields_set:
+            _dict['jitter_factor'] = None
+
         # set to None if max_retries (nullable) is None
         # and model_fields_set contains the field
         if self.max_retries is None and "max_retries" in self.model_fields_set:
@@ -86,6 +96,21 @@ class JobConfigRequest(BaseModel):
         # and model_fields_set contains the field
         if self.queue is None and "queue" in self.model_fields_set:
             _dict['queue'] = None
+
+        # set to None if retry_backoff (nullable) is None
+        # and model_fields_set contains the field
+        if self.retry_backoff is None and "retry_backoff" in self.model_fields_set:
+            _dict['retry_backoff'] = None
+
+        # set to None if retry_delay_secs (nullable) is None
+        # and model_fields_set contains the field
+        if self.retry_delay_secs is None and "retry_delay_secs" in self.model_fields_set:
+            _dict['retry_delay_secs'] = None
+
+        # set to None if retry_max_delay_secs (nullable) is None
+        # and model_fields_set contains the field
+        if self.retry_max_delay_secs is None and "retry_max_delay_secs" in self.model_fields_set:
+            _dict['retry_max_delay_secs'] = None
 
         # set to None if timeout (nullable) is None
         # and model_fields_set contains the field
@@ -104,9 +129,13 @@ class JobConfigRequest(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
+            "jitter_factor": obj.get("jitter_factor"),
             "max_retries": obj.get("max_retries"),
             "priority": obj.get("priority"),
             "queue": obj.get("queue"),
+            "retry_backoff": obj.get("retry_backoff"),
+            "retry_delay_secs": obj.get("retry_delay_secs"),
+            "retry_max_delay_secs": obj.get("retry_max_delay_secs"),
             "timeout": obj.get("timeout")
         })
         return _obj

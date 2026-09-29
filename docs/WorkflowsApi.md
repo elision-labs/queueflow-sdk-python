@@ -320,7 +320,7 @@ Name | Type | Description  | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **list_workflows**
-> ListWorkflowsResponse list_workflows(status=status, queue=queue, limit=limit, offset=offset, order_by=order_by, include_total=include_total)
+> ListWorkflowsResponse list_workflows(status=status, queue=queue, limit=limit, offset=offset, order_by=order_by, include_total=include_total, cursor=cursor)
 
 
 
@@ -360,9 +360,10 @@ with queueflow.ApiClient(configuration) as api_client:
     offset = 56 # int | Number of records to skip (default 0). (optional)
     order_by = 'order_by_example' # str | `created_at ASC` or `created_at DESC` (default DESC). (optional)
     include_total = True # bool | Include the exact `total` count in the response (default false; the count is an extra full scan over the filtered set). (optional)
+    cursor = 'cursor_example' # str | Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended. (optional)
 
     try:
-        api_response = api_instance.list_workflows(status=status, queue=queue, limit=limit, offset=offset, order_by=order_by, include_total=include_total)
+        api_response = api_instance.list_workflows(status=status, queue=queue, limit=limit, offset=offset, order_by=order_by, include_total=include_total, cursor=cursor)
         print("The response of WorkflowsApi->list_workflows:\n")
         pprint(api_response)
     except Exception as e:
@@ -382,6 +383,7 @@ Name | Type | Description  | Notes
  **offset** | **int**| Number of records to skip (default 0). | [optional] 
  **order_by** | **str**| &#x60;created_at ASC&#x60; or &#x60;created_at DESC&#x60; (default DESC). | [optional] 
  **include_total** | **bool**| Include the exact &#x60;total&#x60; count in the response (default false; the count is an extra full scan over the filtered set). | [optional] 
+ **cursor** | **str**| Opaque keyset cursor from a previous page&#39;s &#x60;next_cursor&#x60;. When set, &#x60;offset&#x60; is ignored and listing continues where that page ended. | [optional] 
 
 ### Return type
 

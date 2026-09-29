@@ -37,6 +37,7 @@ class TestListWorkflowsResponse(unittest.TestCase):
             return ListWorkflowsResponse(
                 has_more = True,
                 limit = 56,
+                next_cursor = '',
                 offset = 56,
                 total = 56,
                 workflows = [

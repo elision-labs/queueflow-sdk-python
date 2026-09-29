@@ -26,15 +26,15 @@ from typing_extensions import Self
 
 class JobConfig(BaseModel):
     """
-    Per-job execution configuration. All durations are in seconds.
+    Per-job execution configuration. All durations are in seconds.  Deserialization is partial-friendly: any omitted field takes its [`JobConfig::default`] value (via per-field serde defaults), so workflow-step and cron config overrides can name just the fields they change, and out-of-band rows with sparse `config` JSONB still load. Per-field functions rather than a struct-level `#[serde(default)]`: the struct-level form makes utoipa attach a `default` beside the `BackoffStrategy` `$ref`, which forces a synthetic wrapper type into every generated SDK.
     """ # noqa: E501
     jitter_factor: Optional[Union[StrictFloat, StrictInt]] = Field(default=None, description="Optional jitter in `0.0..=1.0`. `0.1` => +/-10% randomization of each retry delay, which spreads out thundering-herd retries.")
-    max_retries: Annotated[int, Field(strict=True, ge=0)]
-    priority: StrictInt = Field(description="Higher is claimed first within a queue; ties break on `scheduled_at`, then `created_at`.")
+    max_retries: Optional[Annotated[int, Field(strict=True, ge=0)]] = None
+    priority: Optional[StrictInt] = Field(default=None, description="Higher is claimed first within a queue; ties break on `scheduled_at`, then `created_at`.")
     retry_backoff: Optional[BackoffStrategy] = None
-    retry_delay_secs: Annotated[int, Field(strict=True, ge=0)]
-    retry_max_delay_secs: Annotated[int, Field(strict=True, ge=0)]
-    timeout_secs: Annotated[int, Field(strict=True, ge=0)]
+    retry_delay_secs: Optional[Annotated[int, Field(strict=True, ge=0)]] = None
+    retry_max_delay_secs: Optional[Annotated[int, Field(strict=True, ge=0)]] = None
+    timeout_secs: Optional[Annotated[int, Field(strict=True, ge=0)]] = None
     __properties: ClassVar[List[str]] = ["jitter_factor", "max_retries", "priority", "retry_backoff", "retry_delay_secs", "retry_max_delay_secs", "timeout_secs"]
 
     model_config = ConfigDict(

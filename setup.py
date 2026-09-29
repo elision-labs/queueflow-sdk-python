@@ -35,7 +35,7 @@ setup(
     version=VERSION,
     description="QueueFlow API",
     author="QueueFlow",
-    author_email="team@openapitools.org",
+    author_email="team@queueflow.dev",
     url="https://github.com/queueflow/queueflow-sdk-python",
     keywords=["OpenAPI", "OpenAPI-Generator", "QueueFlow API"],
     install_requires=REQUIRES,

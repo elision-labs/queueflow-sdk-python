@@ -1153,6 +1153,7 @@ class JobsApi:
         offset: Annotated[Optional[StrictInt], Field(description="Number of records to skip (default 0).")] = None,
         order_by: Annotated[Optional[StrictStr], Field(description="`created_at ASC` or `created_at DESC` (default DESC).")] = None,
         include_total: Annotated[Optional[StrictBool], Field(description="Include the exact `total` count in the response (default false; the count is an extra full scan over the filtered set).")] = None,
+        cursor: Annotated[Optional[StrictStr], Field(description="Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended.")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1181,6 +1182,8 @@ class JobsApi:
         :type order_by: str
         :param include_total: Include the exact `total` count in the response (default false; the count is an extra full scan over the filtered set).
         :type include_total: bool
+        :param cursor: Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended.
+        :type cursor: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1210,6 +1213,7 @@ class JobsApi:
             offset=offset,
             order_by=order_by,
             include_total=include_total,
+            cursor=cursor,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1240,6 +1244,7 @@ class JobsApi:
         offset: Annotated[Optional[StrictInt], Field(description="Number of records to skip (default 0).")] = None,
         order_by: Annotated[Optional[StrictStr], Field(description="`created_at ASC` or `created_at DESC` (default DESC).")] = None,
         include_total: Annotated[Optional[StrictBool], Field(description="Include the exact `total` count in the response (default false; the count is an extra full scan over the filtered set).")] = None,
+        cursor: Annotated[Optional[StrictStr], Field(description="Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended.")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1268,6 +1273,8 @@ class JobsApi:
         :type order_by: str
         :param include_total: Include the exact `total` count in the response (default false; the count is an extra full scan over the filtered set).
         :type include_total: bool
+        :param cursor: Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended.
+        :type cursor: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1297,6 +1304,7 @@ class JobsApi:
             offset=offset,
             order_by=order_by,
             include_total=include_total,
+            cursor=cursor,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1327,6 +1335,7 @@ class JobsApi:
         offset: Annotated[Optional[StrictInt], Field(description="Number of records to skip (default 0).")] = None,
         order_by: Annotated[Optional[StrictStr], Field(description="`created_at ASC` or `created_at DESC` (default DESC).")] = None,
         include_total: Annotated[Optional[StrictBool], Field(description="Include the exact `total` count in the response (default false; the count is an extra full scan over the filtered set).")] = None,
+        cursor: Annotated[Optional[StrictStr], Field(description="Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended.")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1355,6 +1364,8 @@ class JobsApi:
         :type order_by: str
         :param include_total: Include the exact `total` count in the response (default false; the count is an extra full scan over the filtered set).
         :type include_total: bool
+        :param cursor: Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended.
+        :type cursor: str
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1384,6 +1395,7 @@ class JobsApi:
             offset=offset,
             order_by=order_by,
             include_total=include_total,
+            cursor=cursor,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1409,6 +1421,7 @@ class JobsApi:
         offset,
         order_by,
         include_total,
+        cursor,
         _request_auth,
         _content_type,
         _headers,
@@ -1454,6 +1467,10 @@ class JobsApi:
         if include_total is not None:
             
             _query_params.append(('include_total', include_total))
+            
+        if cursor is not None:
+            
+            _query_params.append(('cursor', cursor))
             
         # process the header parameters
         # process the form parameters

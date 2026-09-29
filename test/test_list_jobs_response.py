@@ -73,6 +73,7 @@ class TestListJobsResponse(unittest.TestCase):
                         workflow_step_id = '', )
                     ],
                 limit = 56,
+                next_cursor = '',
                 offset = 56,
                 total = 56
             )

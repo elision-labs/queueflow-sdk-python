@@ -45,11 +45,6 @@ class TestJobConfig(unittest.TestCase):
             )
         else:
             return JobConfig(
-                max_retries = 0,
-                priority = 56,
-                retry_delay_secs = 0,
-                retry_max_delay_secs = 0,
-                timeout_secs = 0,
         )
         """
 

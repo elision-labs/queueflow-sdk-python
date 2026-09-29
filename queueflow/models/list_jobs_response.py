@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from queueflow.models.job import Job
 from typing import Optional, Set
@@ -30,9 +30,10 @@ class ListJobsResponse(BaseModel):
     has_more: StrictBool
     jobs: List[Job]
     limit: StrictInt
+    next_cursor: Optional[StrictStr] = Field(default=None, description="Opaque keyset cursor for the next page (present when `has_more`). Pass it back as `cursor` to continue where this page ended; cheaper than deep OFFSET paging.")
     offset: StrictInt
     total: Optional[StrictInt] = Field(default=None, description="Exact total match count. Only present when the request set `include_total=true`; computing it costs a full count over the filtered set, so it is opt-in.")
-    __properties: ClassVar[List[str]] = ["has_more", "jobs", "limit", "offset", "total"]
+    __properties: ClassVar[List[str]] = ["has_more", "jobs", "limit", "next_cursor", "offset", "total"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -80,6 +81,11 @@ class ListJobsResponse(BaseModel):
                 if _item_jobs:
                     _items.append(_item_jobs.to_dict())
             _dict['jobs'] = _items
+        # set to None if next_cursor (nullable) is None
+        # and model_fields_set contains the field
+        if self.next_cursor is None and "next_cursor" in self.model_fields_set:
+            _dict['next_cursor'] = None
+
         # set to None if total (nullable) is None
         # and model_fields_set contains the field
         if self.total is None and "total" in self.model_fields_set:
@@ -100,6 +106,7 @@ class ListJobsResponse(BaseModel):
             "has_more": obj.get("has_more"),
             "jobs": [Job.from_dict(_item) for _item in obj["jobs"]] if obj.get("jobs") is not None else None,
             "limit": obj.get("limit"),
+            "next_cursor": obj.get("next_cursor"),
             "offset": obj.get("offset"),
             "total": obj.get("total")
         })

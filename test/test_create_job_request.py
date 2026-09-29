@@ -36,9 +36,13 @@ class TestCreateJobRequest(unittest.TestCase):
         if include_optional:
             return CreateJobRequest(
                 config = queueflow.models.job_config_request.JobConfigRequest(
+                    jitter_factor = 1.337, 
                     max_retries = 0, 
                     priority = 56, 
                     queue = '', 
+                    retry_backoff = 'fixed', 
+                    retry_delay_secs = 0, 
+                    retry_max_delay_secs = 0, 
                     timeout = 0, ),
                 payload = {
                     'key' : null

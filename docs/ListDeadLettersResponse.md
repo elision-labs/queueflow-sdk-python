@@ -8,6 +8,7 @@ Name | Type | Description | Notes
 **dead_letters** | [**List[DeadLetter]**](DeadLetter.md) |  | 
 **has_more** | **bool** |  | 
 **limit** | **int** |  | 
+**next_cursor** | **str** | Opaque keyset cursor for the next page (present when &#x60;has_more&#x60;). Pass it back as &#x60;cursor&#x60; to continue where this page ended; cheaper than deep OFFSET paging. | [optional] 
 **offset** | **int** |  | 
 **total** | **int** | Exact total match count; only present when &#x60;include_total&#x3D;true&#x60;. | [optional] 
 
