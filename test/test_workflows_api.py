@@ -50,6 +50,12 @@ class TestWorkflowsApi(unittest.TestCase):
         """
         pass
 
+    def test_get_workflow_step_states(self) -> None:
+        """Test case for get_workflow_step_states
+
+        """
+        pass
+
     def test_list_workflows(self) -> None:
         """Test case for list_workflows
 

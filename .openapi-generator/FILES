@@ -42,6 +42,7 @@ docs/OnSuccess.md
 docs/ReadyStatus.md
 docs/ReplayDeadLetterResponse.md
 docs/StatsSnapshot.md
+docs/StepStatus.md
 docs/SystemApi.md
 docs/TasksResponse.md
 docs/WorkerApi.md
@@ -49,6 +50,8 @@ docs/Workflow.md
 docs/WorkflowDiagramResponse.md
 docs/WorkflowStatus.md
 docs/WorkflowStep.md
+docs/WorkflowStepState.md
+docs/WorkflowStepStatesResponse.md
 docs/WorkflowsApi.md
 git_push.sh
 pyproject.toml
@@ -100,11 +103,14 @@ queueflow/models/on_success.py
 queueflow/models/ready_status.py
 queueflow/models/replay_dead_letter_response.py
 queueflow/models/stats_snapshot.py
+queueflow/models/step_status.py
 queueflow/models/tasks_response.py
 queueflow/models/workflow.py
 queueflow/models/workflow_diagram_response.py
 queueflow/models/workflow_status.py
 queueflow/models/workflow_step.py
+queueflow/models/workflow_step_state.py
+queueflow/models/workflow_step_states_response.py
 queueflow/py.typed
 queueflow/rest.py
 requirements.txt
@@ -149,6 +155,7 @@ test/test_on_success.py
 test/test_ready_status.py
 test/test_replay_dead_letter_response.py
 test/test_stats_snapshot.py
+test/test_step_status.py
 test/test_system_api.py
 test/test_tasks_response.py
 test/test_worker_api.py
@@ -156,5 +163,7 @@ test/test_workflow.py
 test/test_workflow_diagram_response.py
 test/test_workflow_status.py
 test/test_workflow_step.py
+test/test_workflow_step_state.py
+test/test_workflow_step_states_response.py
 test/test_workflows_api.py
 tox.ini

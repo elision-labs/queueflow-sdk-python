@@ -8,6 +8,7 @@ Method | HTTP request | Description
 [**create_workflow**](WorkflowsApi.md#create_workflow) | **POST** /api/v1/workflows | 
 [**get_workflow**](WorkflowsApi.md#get_workflow) | **GET** /api/v1/workflows/{id} | 
 [**get_workflow_diagram**](WorkflowsApi.md#get_workflow_diagram) | **GET** /api/v1/workflows/{id}/diagram | 
+[**get_workflow_step_states**](WorkflowsApi.md#get_workflow_step_states) | **GET** /api/v1/workflows/{id}/steps | 
 [**list_workflows**](WorkflowsApi.md#list_workflows) | **GET** /api/v1/workflows | 
 
 
@@ -313,6 +314,84 @@ Name | Type | Description  | Notes
 | Status code | Description | Response headers |
 |-------------|-------------|------------------|
 **200** | Mermaid diagram of the workflow DAG |  -  |
+**401** | Unauthorized |  -  |
+**403** | Forbidden |  -  |
+**404** | Not found |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **get_workflow_step_states**
+> WorkflowStepStatesResponse get_workflow_step_states(id)
+
+
+
+### Example
+
+* Bearer (API Key) Authentication (bearerAuth):
+
+```python
+import queueflow
+from queueflow.models.workflow_step_states_response import WorkflowStepStatesResponse
+from queueflow.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:8000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = queueflow.Configuration(
+    host = "http://localhost:8000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (API Key): bearerAuth
+configuration = queueflow.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with queueflow.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = queueflow.WorkflowsApi(api_client)
+    id = 'id_example' # str | Workflow id
+
+    try:
+        api_response = api_instance.get_workflow_step_states(id)
+        print("The response of WorkflowsApi->get_workflow_step_states:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling WorkflowsApi->get_workflow_step_states: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **id** | **str**| Workflow id | 
+
+### Return type
+
+[**WorkflowStepStatesResponse**](WorkflowStepStatesResponse.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | Runtime status of every step, in declaration order. The workflow record carries only step definitions; this is the live progress view. |  -  |
 **401** | Unauthorized |  -  |
 **403** | Forbidden |  -  |
 **404** | Not found |  -  |
