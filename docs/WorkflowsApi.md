@@ -399,7 +399,7 @@ Name | Type | Description  | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **list_workflows**
-> ListWorkflowsResponse list_workflows(status=status, queue=queue, limit=limit, offset=offset, order_by=order_by, include_total=include_total, cursor=cursor)
+> ListWorkflowsResponse list_workflows(status=status, queue=queue, limit=limit, offset=offset, order_by=order_by, include_total=include_total, cursor=cursor, created_after=created_after, created_before=created_before)
 
 
 
@@ -440,9 +440,11 @@ with queueflow.ApiClient(configuration) as api_client:
     order_by = 'order_by_example' # str | `created_at ASC` or `created_at DESC` (default DESC). (optional)
     include_total = True # bool | Include the exact `total` count in the response (default false; the count is an extra full scan over the filtered set). (optional)
     cursor = 'cursor_example' # str | Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended. (optional)
+    created_after = '2013-10-20T19:20:30+01:00' # datetime | Only rows created at or after this instant (RFC 3339, inclusive). With `created_before` this forms the half-open range `[after, before)` — the natural shape for walking history period by period. (optional)
+    created_before = '2013-10-20T19:20:30+01:00' # datetime | Only rows created strictly before this instant (RFC 3339, exclusive). (optional)
 
     try:
-        api_response = api_instance.list_workflows(status=status, queue=queue, limit=limit, offset=offset, order_by=order_by, include_total=include_total, cursor=cursor)
+        api_response = api_instance.list_workflows(status=status, queue=queue, limit=limit, offset=offset, order_by=order_by, include_total=include_total, cursor=cursor, created_after=created_after, created_before=created_before)
         print("The response of WorkflowsApi->list_workflows:\n")
         pprint(api_response)
     except Exception as e:
@@ -463,6 +465,8 @@ Name | Type | Description  | Notes
  **order_by** | **str**| &#x60;created_at ASC&#x60; or &#x60;created_at DESC&#x60; (default DESC). | [optional] 
  **include_total** | **bool**| Include the exact &#x60;total&#x60; count in the response (default false; the count is an extra full scan over the filtered set). | [optional] 
  **cursor** | **str**| Opaque keyset cursor from a previous page&#39;s &#x60;next_cursor&#x60;. When set, &#x60;offset&#x60; is ignored and listing continues where that page ended. | [optional] 
+ **created_after** | **datetime**| Only rows created at or after this instant (RFC 3339, inclusive). With &#x60;created_before&#x60; this forms the half-open range &#x60;[after, before)&#x60; — the natural shape for walking history period by period. | [optional] 
+ **created_before** | **datetime**| Only rows created strictly before this instant (RFC 3339, exclusive). | [optional] 
 
 ### Return type
 

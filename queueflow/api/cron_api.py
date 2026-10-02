@@ -16,6 +16,7 @@ from pydantic import validate_call, Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
+from datetime import datetime
 from pydantic import Field, StrictBool, StrictInt, StrictStr
 from typing import Optional
 from typing_extensions import Annotated
@@ -866,6 +867,8 @@ class CronApi:
         order_by: Annotated[Optional[StrictStr], Field(description="`created_at ASC` or `created_at DESC` (default DESC).")] = None,
         include_total: Annotated[Optional[StrictBool], Field(description="Include the exact `total` count in the response (default false; the count is an extra full scan over the filtered set).")] = None,
         cursor: Annotated[Optional[StrictStr], Field(description="Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended.")] = None,
+        created_after: Annotated[Optional[datetime], Field(description="Only rows created at or after this instant (RFC 3339, inclusive). With `created_before` this forms the half-open range `[after, before)` — the natural shape for walking history period by period.")] = None,
+        created_before: Annotated[Optional[datetime], Field(description="Only rows created strictly before this instant (RFC 3339, exclusive).")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -896,6 +899,10 @@ class CronApi:
         :type include_total: bool
         :param cursor: Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended.
         :type cursor: str
+        :param created_after: Only rows created at or after this instant (RFC 3339, inclusive). With `created_before` this forms the half-open range `[after, before)` — the natural shape for walking history period by period.
+        :type created_after: datetime
+        :param created_before: Only rows created strictly before this instant (RFC 3339, exclusive).
+        :type created_before: datetime
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -926,6 +933,8 @@ class CronApi:
             order_by=order_by,
             include_total=include_total,
             cursor=cursor,
+            created_after=created_after,
+            created_before=created_before,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -957,6 +966,8 @@ class CronApi:
         order_by: Annotated[Optional[StrictStr], Field(description="`created_at ASC` or `created_at DESC` (default DESC).")] = None,
         include_total: Annotated[Optional[StrictBool], Field(description="Include the exact `total` count in the response (default false; the count is an extra full scan over the filtered set).")] = None,
         cursor: Annotated[Optional[StrictStr], Field(description="Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended.")] = None,
+        created_after: Annotated[Optional[datetime], Field(description="Only rows created at or after this instant (RFC 3339, inclusive). With `created_before` this forms the half-open range `[after, before)` — the natural shape for walking history period by period.")] = None,
+        created_before: Annotated[Optional[datetime], Field(description="Only rows created strictly before this instant (RFC 3339, exclusive).")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -987,6 +998,10 @@ class CronApi:
         :type include_total: bool
         :param cursor: Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended.
         :type cursor: str
+        :param created_after: Only rows created at or after this instant (RFC 3339, inclusive). With `created_before` this forms the half-open range `[after, before)` — the natural shape for walking history period by period.
+        :type created_after: datetime
+        :param created_before: Only rows created strictly before this instant (RFC 3339, exclusive).
+        :type created_before: datetime
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1017,6 +1032,8 @@ class CronApi:
             order_by=order_by,
             include_total=include_total,
             cursor=cursor,
+            created_after=created_after,
+            created_before=created_before,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1048,6 +1065,8 @@ class CronApi:
         order_by: Annotated[Optional[StrictStr], Field(description="`created_at ASC` or `created_at DESC` (default DESC).")] = None,
         include_total: Annotated[Optional[StrictBool], Field(description="Include the exact `total` count in the response (default false; the count is an extra full scan over the filtered set).")] = None,
         cursor: Annotated[Optional[StrictStr], Field(description="Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended.")] = None,
+        created_after: Annotated[Optional[datetime], Field(description="Only rows created at or after this instant (RFC 3339, inclusive). With `created_before` this forms the half-open range `[after, before)` — the natural shape for walking history period by period.")] = None,
+        created_before: Annotated[Optional[datetime], Field(description="Only rows created strictly before this instant (RFC 3339, exclusive).")] = None,
         _request_timeout: Union[
             None,
             Annotated[StrictFloat, Field(gt=0)],
@@ -1078,6 +1097,10 @@ class CronApi:
         :type include_total: bool
         :param cursor: Opaque keyset cursor from a previous page's `next_cursor`. When set, `offset` is ignored and listing continues where that page ended.
         :type cursor: str
+        :param created_after: Only rows created at or after this instant (RFC 3339, inclusive). With `created_before` this forms the half-open range `[after, before)` — the natural shape for walking history period by period.
+        :type created_after: datetime
+        :param created_before: Only rows created strictly before this instant (RFC 3339, exclusive).
+        :type created_before: datetime
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
                                  timeout. It can also be a pair (tuple) of
@@ -1108,6 +1131,8 @@ class CronApi:
             order_by=order_by,
             include_total=include_total,
             cursor=cursor,
+            created_after=created_after,
+            created_before=created_before,
             _request_auth=_request_auth,
             _content_type=_content_type,
             _headers=_headers,
@@ -1134,6 +1159,8 @@ class CronApi:
         order_by,
         include_total,
         cursor,
+        created_after,
+        created_before,
         _request_auth,
         _content_type,
         _headers,
@@ -1183,6 +1210,32 @@ class CronApi:
         if cursor is not None:
             
             _query_params.append(('cursor', cursor))
+            
+        if created_after is not None:
+            if isinstance(created_after, datetime):
+                _query_params.append(
+                    (
+                        'created_after',
+                        created_after.strftime(
+                            self.api_client.configuration.datetime_format
+                        )
+                    )
+                )
+            else:
+                _query_params.append(('created_after', created_after))
+            
+        if created_before is not None:
+            if isinstance(created_before, datetime):
+                _query_params.append(
+                    (
+                        'created_before',
+                        created_before.strftime(
+                            self.api_client.configuration.datetime_format
+                        )
+                    )
+                )
+            else:
+                _query_params.append(('created_before', created_before))
             
         # process the header parameters
         # process the form parameters
