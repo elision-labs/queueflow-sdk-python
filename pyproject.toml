@@ -5,7 +5,7 @@ description = "QueueFlow API"
 authors = ["QueueFlow"]
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/queueflow/queueflow-sdk-python"
+repository = "https://github.com/elision-labs/queueflow-sdk-python"
 keywords = ["OpenAPI", "OpenAPI-Generator", "QueueFlow API"]
 include = ["queueflow/py.typed"]
 
