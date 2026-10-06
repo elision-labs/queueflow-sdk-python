@@ -265,3 +265,162 @@ class TestWorkflows(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- worker runtime ----------------------------------------------------------
+
+import threading
+import time as _time
+
+from queueflow.exceptions import ApiException
+from queueflow.facade import NonRetryableError
+
+
+def lease(task: str = "echo", job_id: str = "j1", token: str = "tok-1") -> SimpleNamespace:
+    return SimpleNamespace(
+        job=SimpleNamespace(id=job_id, task_name=task, payload={}), lease_token=token
+    )
+
+
+class FakeWorkerApi:
+    """Serves a scripted list of leases, then sets `stop` so run_worker exits."""
+
+    def __init__(
+        self,
+        leases: Optional[List[SimpleNamespace]] = None,
+        heartbeat_status: str = "running",
+        lease_error: Optional[Exception] = None,
+        complete_error: Optional[Exception] = None,
+    ) -> None:
+        self.pending = list(leases or [])
+        self.heartbeat_status = heartbeat_status
+        self.lease_error = lease_error
+        self.complete_error = complete_error
+        self.completes: List[Any] = []
+        self.fails: List[Any] = []
+        self.heartbeats = 0
+        self.stop = threading.Event()
+
+    def lease_jobs(self, queue: str, req: Any) -> Any:
+        if self.lease_error is not None:
+            err, self.lease_error = self.lease_error, None
+            raise err
+        if not self.pending:
+            self.stop.set()
+            return SimpleNamespace(jobs=[])
+        return SimpleNamespace(jobs=[self.pending.pop(0)])
+
+    def heartbeat_job(self, job_id: str, req: Any) -> Any:
+        self.heartbeats += 1
+        return SimpleNamespace(status=self.heartbeat_status)
+
+    def complete_job(self, job_id: str, req: Any) -> None:
+        if self.complete_error is not None:
+            raise self.complete_error
+        self.completes.append((job_id, req))
+
+    def fail_job(self, job_id: str, req: Any) -> None:
+        self.fails.append((job_id, req))
+
+
+def worker_client(api: FakeWorkerApi) -> QueueFlow:
+    qf = QueueFlow("http://qf.test", "test-token")
+    qf.worker = api
+    return qf
+
+
+class TestWorkerRuntime(unittest.TestCase):
+    def run_until_drained(self, api: FakeWorkerApi, handlers: Dict[str, Any], **kw: Any) -> None:
+        worker_client(api).run_worker("q", handlers, stop=api.stop, wait_secs=0, **kw)
+
+    def test_happy_path_completes_with_the_handler_result(self) -> None:
+        api = FakeWorkerApi([lease()])
+        self.run_until_drained(api, {"echo": lambda job: {"ok": job.id}})
+        self.assertEqual(len(api.completes), 1)
+        job_id, req = api.completes[0]
+        self.assertEqual(job_id, "j1")
+        self.assertEqual(req.lease_token, "tok-1")
+        self.assertEqual(req.result, {"ok": "j1"})
+        self.assertEqual(api.fails, [])
+
+    def test_none_result_becomes_an_empty_dict(self) -> None:
+        api = FakeWorkerApi([lease()])
+        self.run_until_drained(api, {"echo": lambda job: None})
+        self.assertEqual(api.completes[0][1].result, {})
+
+    def test_a_raising_handler_fails_retryably(self) -> None:
+        def boom(job):
+            raise RuntimeError("gateway 503")
+
+        api = FakeWorkerApi([lease()])
+        self.run_until_drained(api, {"echo": boom})
+        self.assertEqual(api.completes, [])
+        _, req = api.fails[0]
+        self.assertIn("gateway 503", req.error)
+        self.assertNotEqual(req.retryable, False)
+
+    def test_non_retryable_error_dead_letters(self) -> None:
+        def reject(job):
+            raise NonRetryableError("fraud")
+
+        api = FakeWorkerApi([lease()])
+        self.run_until_drained(api, {"echo": reject})
+        _, req = api.fails[0]
+        self.assertEqual(req.retryable, False)
+
+    def test_unknown_task_fails_non_retryably(self) -> None:
+        api = FakeWorkerApi([lease(task="ghost")])
+        self.run_until_drained(api, {"echo": lambda job: {}})
+        _, req = api.fails[0]
+        self.assertEqual(req.retryable, False)
+        self.assertIn("ghost", req.error)
+
+    def test_auth_errors_raise_instead_of_spinning(self) -> None:
+        api = FakeWorkerApi(lease_error=ApiException(status=403, reason="forbidden"))
+        with self.assertRaises(ApiException):
+            self.run_until_drained(api, {})
+
+    def test_transient_lease_errors_back_off_and_continue(self) -> None:
+        api = FakeWorkerApi([lease()], lease_error=RuntimeError("connection reset"))
+        seen: List[Exception] = []
+        self.run_until_drained(api, {"echo": lambda job: {}}, on_error=seen.append)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(len(api.completes), 1)
+
+    def test_two_argument_handlers_receive_a_context(self) -> None:
+        contexts: List[Any] = []
+
+        def handler(job, ctx):
+            contexts.append(ctx)
+            return {}
+
+        api = FakeWorkerApi([lease()])
+        self.run_until_drained(api, {"echo": handler})
+        self.assertEqual(len(contexts), 1)
+        self.assertFalse(contexts[0].cancelled)
+
+    def test_lost_lease_abandons_reporting_and_cancels_the_context(self) -> None:
+        observed = {"cancelled_seen": False}
+
+        def slow(job, ctx):
+            # Outlive one 1s heartbeat tick (lease_secs=2); the fake reports
+            # the job cancelled, which must flip ctx.cancelled.
+            deadline = _time.monotonic() + 4.0
+            while _time.monotonic() < deadline:
+                if ctx.cancelled:
+                    observed["cancelled_seen"] = True
+                    return {}
+                _time.sleep(0.05)
+            return {}
+
+        api = FakeWorkerApi([lease()], heartbeat_status="cancelled")
+        self.run_until_drained(api, {"echo": slow}, lease_secs=2)
+        self.assertTrue(observed["cancelled_seen"])
+        self.assertGreaterEqual(api.heartbeats, 1)
+        self.assertEqual(api.completes, [])
+        self.assertEqual(api.fails, [])
+
+    def test_a_failed_report_is_never_converted_into_a_job_failure(self) -> None:
+        api = FakeWorkerApi([lease()], complete_error=RuntimeError("engine restarting"))
+        self.run_until_drained(api, {"echo": lambda job: {"ok": True}})
+        self.assertEqual(api.fails, [])  # lease expiry redelivers; no fail() call
