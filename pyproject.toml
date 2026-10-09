@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "queueflow"
-version = "0.2.1"
+version = "0.2.2"
 description = "Python client for QueueFlow, a PostgreSQL-native distributed job queue and workflow engine."
 readme = "README.md"
 license = "MIT"
