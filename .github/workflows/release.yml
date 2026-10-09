@@ -2,10 +2,10 @@ name: Release
 
 # Publish the `queueflow` package to PyPI when a v* tag is pushed.
 #
-# Auth: the PYPI_API_TOKEN repository secret (a PyPI API token scoped to the
-# queueflow project). Alternatively register this repo and workflow as a
-# Trusted Publisher on pypi.org, delete the secret, and remove the `password`
-# line below: the action then authenticates with GitHub's OIDC token.
+# Auth is PyPI Trusted Publishing: this repo and workflow are registered as
+# a trusted publisher for the queueflow project on pypi.org, and the id-token
+# permission lets the publish action exchange GitHub's OIDC token for a
+# short-lived upload credential. No API token secret is used.
 on:
   push:
     tags: ["v*"]
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   publish:
-    name: build + twine upload
+    name: build + publish (trusted publishing)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,5 +30,3 @@ jobs:
       - run: python -m pip install -q build
       - run: python -m build
       - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
