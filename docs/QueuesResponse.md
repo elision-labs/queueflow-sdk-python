@@ -5,7 +5,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**queues** | [**List[QueueStats]**](QueueStats.md) | One entry per queue that currently has non-terminal jobs, sorted by name. | 
+**queues** | [**List[QueueStats]**](QueueStats.md) | One entry per queue the caller has enqueued to (since 0.5.0, whether or not it currently has jobs) or that currently has non-terminal jobs, sorted by name. | 
 
 ## Example
 

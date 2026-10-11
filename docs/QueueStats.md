@@ -7,6 +7,7 @@ Live, per-queue backlog figures read from the store: what an operator watches to
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **oldest_pending_age_secs** | **int** | Seconds the oldest claimable job has been waiting, &#x60;None&#x60; when nothing is claimable. The queue&#39;s primary health signal: it grows when workers cannot keep up and stays near zero when they can. | [optional] 
+**paused** | **bool** | Claims for this tenant&#39;s jobs on the queue are paused (see &#x60;POST /api/v1/queues/{queue}/pause&#x60;). Pending jobs accumulate; running ones finish. In the all-tenants view this is true only when every registered tenant of the queue is paused. | [optional] 
 **pending** | **int** | Claimable now: &#x60;pending&#x60; or &#x60;retrying&#x60; with &#x60;scheduled_at&#x60; in the past. | 
 **queue** | **str** |  | 
 **running** | **int** | Currently leased by a worker. | 

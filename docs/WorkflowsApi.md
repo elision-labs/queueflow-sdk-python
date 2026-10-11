@@ -399,7 +399,7 @@ Name | Type | Description  | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **list_workflows**
-> ListWorkflowsResponse list_workflows(status=status, queue=queue, limit=limit, offset=offset, order_by=order_by, include_total=include_total, cursor=cursor, created_after=created_after, created_before=created_before)
+> ListWorkflowsResponse list_workflows(status=status, queue=queue, task_name=task_name, replayed=replayed, limit=limit, offset=offset, order_by=order_by, include_total=include_total, cursor=cursor, created_after=created_after, created_before=created_before)
 
 
 
@@ -435,6 +435,8 @@ with queueflow.ApiClient(configuration) as api_client:
     api_instance = queueflow.WorkflowsApi(api_client)
     status = 'status_example' # str | Filter by status (e.g. `pending`, `completed`). (optional)
     queue = 'queue_example' # str | Filter by queue name (jobs only). (optional)
+    task_name = 'task_name_example' # str | Filter by task name (jobs and dead letters). (optional)
+    replayed = True # bool | Dead letters only: `false` lists entries not yet replayed, `true` the replayed ones; both when omitted. (optional)
     limit = 56 # int | Page size, 1..=100 (default 50). (optional)
     offset = 56 # int | Number of records to skip (default 0). (optional)
     order_by = 'order_by_example' # str | `created_at ASC` or `created_at DESC` (default DESC). (optional)
@@ -444,7 +446,7 @@ with queueflow.ApiClient(configuration) as api_client:
     created_before = '2013-10-20T19:20:30+01:00' # datetime | Only rows created strictly before this instant (RFC 3339, exclusive). (optional)
 
     try:
-        api_response = api_instance.list_workflows(status=status, queue=queue, limit=limit, offset=offset, order_by=order_by, include_total=include_total, cursor=cursor, created_after=created_after, created_before=created_before)
+        api_response = api_instance.list_workflows(status=status, queue=queue, task_name=task_name, replayed=replayed, limit=limit, offset=offset, order_by=order_by, include_total=include_total, cursor=cursor, created_after=created_after, created_before=created_before)
         print("The response of WorkflowsApi->list_workflows:\n")
         pprint(api_response)
     except Exception as e:
@@ -460,6 +462,8 @@ Name | Type | Description  | Notes
 ------------- | ------------- | ------------- | -------------
  **status** | **str**| Filter by status (e.g. &#x60;pending&#x60;, &#x60;completed&#x60;). | [optional] 
  **queue** | **str**| Filter by queue name (jobs only). | [optional] 
+ **task_name** | **str**| Filter by task name (jobs and dead letters). | [optional] 
+ **replayed** | **bool**| Dead letters only: &#x60;false&#x60; lists entries not yet replayed, &#x60;true&#x60; the replayed ones; both when omitted. | [optional] 
  **limit** | **int**| Page size, 1..&#x3D;100 (default 50). | [optional] 
  **offset** | **int**| Number of records to skip (default 0). | [optional] 
  **order_by** | **str**| &#x60;created_at ASC&#x60; or &#x60;created_at DESC&#x60; (default DESC). | [optional] 
