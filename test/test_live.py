@@ -23,8 +23,10 @@ from typing import Any, Dict, List
 
 import pytest
 
-from queueflow.exceptions import NotFoundException
-from queueflow.facade import QueueFlow, wf
+from queueflow.exceptions import BadRequestException, NotFoundException
+from queueflow.facade import NonRetryableError, QueueFlow, wf
+from queueflow.models.lease_jobs_request import LeaseJobsRequest
+from queueflow.models.complete_job_request import CompleteJobRequest
 
 URL = os.environ.get("QUEUEFLOW_URL")
 TOKEN = os.environ.get("QUEUEFLOW_TOKEN", "dev")
@@ -224,6 +226,147 @@ def test_worker_runtime_runs_jobs_concurrently_up_to_the_cap(qf: QueueFlow, suff
         assert job.status == "completed", f"job {job.id}: {job.error_message}"
         assert job.result["handled"] is True
 
-    queues = qf.queues()
-    assert isinstance(queues, list)
-    assert not any(q.queue == queue for q in queues), "a drained queue must not be listed"
+    # Since server 0.5.0 every queue the tenant enqueued to is listed, drained
+    # ones with zero counts.
+    stats = [q for q in qf.queues() if q.queue == queue]
+    assert len(stats) == 1, "the queue this run enqueued to must be listed"
+    assert (stats[0].pending, stats[0].running, stats[0].scheduled) == (0, 0, 0)
+    assert stats[0].paused is False
+
+
+# --- 0.5.0 server operations ---------------------------------------------------
+#
+# The server and database may be shared with other suites running at the same
+# time, so every bulk cancel, bulk replay and pause below is scoped to a queue
+# (and task name) unique to this run; nothing here can touch another run's jobs.
+
+
+def test_whoami_reports_the_tenant_and_write_access(qf: QueueFlow) -> None:
+    me = qf.whoami()
+    assert me.tenant
+    assert me.access in ("read_write", "read_only")
+    # The rest of this module creates jobs, which needs a read-write credential.
+    assert me.access == "read_write", f"QUEUEFLOW_TOKEN is {me.access}"
+    assert qf.system.who_am_i().tenant == me.tenant
+
+
+def test_cancel_jobs_is_scoped_filtered_and_bounded(qf: QueueFlow, suffix: str) -> None:
+    # Nothing leases this queue, so every job stays pending until cancelled.
+    queue = f"py-live-cancel-{suffix}"
+    task = f"py-live-cancel-task-{suffix}"
+    other = f"py-live-cancel-other-{suffix}"
+    targets = [qf.create_job(task, payload={"i": i}, queue=queue) for i in range(3)]
+    bystander = qf.create_job(other, payload={}, queue=queue)
+
+    # The new list filter narrows the queue down to the one task.
+    listed = qf.jobs.list_jobs(queue=queue, task_name=task, limit=100).jobs
+    assert sorted(j.id for j in listed) == sorted(j.id for j in targets)
+
+    # A terminal status is a 400 before anything is touched.
+    with pytest.raises(BadRequestException):
+        qf.cancel_jobs(queue=queue, status="completed")
+    assert qf.jobs.get_job(targets[0].id).status == "pending"
+
+    # Oldest first, bounded by limit, then the remainder, then nothing.
+    assert qf.cancel_jobs(queue=queue, task_name=task, status="pending", limit=2) == 2
+    assert qf.jobs.get_job(targets[0].id).status == "cancelled"
+    assert qf.jobs.get_job(targets[1].id).status == "cancelled"
+    assert qf.jobs.get_job(targets[2].id).status == "pending"
+    assert qf.jobs.get_job(bystander.id).status == "pending", "task_name filter ignored"
+    assert qf.cancel_jobs(queue=queue, task_name=task) == 1
+    assert qf.cancel_jobs(queue=queue, task_name=task) == 0
+
+    # Without the task filter the whole queue is swept.
+    assert qf.cancel_jobs(queue=queue) == 1
+    assert qf.jobs.get_job(bystander.id).status == "cancelled"
+    assert qf.cancel_jobs(queue=queue) == 0
+
+
+def test_pause_and_resume_queue_gate_claims(qf: QueueFlow, suffix: str) -> None:
+    queue = f"py-live-pause-{suffix}"
+    task = f"py-live-pause-task-{suffix}"
+    job = qf.create_job(task, payload={"gated": True}, queue=queue)
+
+    paused = qf.pause_queue(queue)
+    assert paused.queue == queue
+    assert paused.paused is True
+    assert paused.pending == 1
+    assert paused.running == 0
+    # Idempotent.
+    assert qf.pause_queue(queue).paused is True
+    stats = [q for q in qf.queues() if q.queue == queue]
+    assert len(stats) == 1 and stats[0].paused is True
+
+    # A worker gets nothing from a paused queue.
+    lease_req = LeaseJobsRequest(max_jobs=1, lease_secs=10, wait_secs=0)
+    assert qf.worker.lease_jobs(queue, lease_req).jobs == []
+    assert qf.jobs.get_job(job.id).status == "pending"
+
+    resumed = qf.resume_queue(queue)
+    assert resumed.paused is False
+    assert resumed.pending == 1
+    assert qf.resume_queue(queue).paused is False
+
+    # Claims flow again: lease the job and complete it through the worker api.
+    leased = qf.worker.lease_jobs(queue, LeaseJobsRequest(max_jobs=1, lease_secs=10, wait_secs=5)).jobs
+    assert [l.job.id for l in leased] == [job.id]
+    qf.worker.complete_job(job.id, CompleteJobRequest(lease_token=leased[0].lease_token, result={"ok": True}))
+    done = qf.wait_for_job(job.id, timeout=WAIT_SECS, interval=POLL_SECS)
+    assert done.status == "completed"
+    drained = [q for q in qf.queues() if q.queue == queue]
+    assert len(drained) == 1
+    assert (drained[0].pending, drained[0].running, drained[0].paused) == (0, 0, False)
+
+
+def test_bulk_replay_of_dead_letters_scoped_to_this_run(qf: QueueFlow, suffix: str) -> None:
+    queue = f"py-live-dlq-{suffix}"
+    task = f"py-live-dlq-task-{suffix}"
+    job = qf.create_job(task, payload={"doomed": True}, queue=queue, max_retries=0)
+
+    stop = threading.Event()
+
+    def reject(leased: Any) -> Dict[str, Any]:
+        stop.set()
+        raise NonRetryableError("permanent: bad input")
+
+    worker = threading.Thread(
+        target=qf.run_worker,
+        args=(queue, {task: reject}),
+        kwargs={"lease_secs": 10, "wait_secs": 2, "stop": stop},
+        daemon=True,
+    )
+    worker.start()
+    try:
+        failed = qf.wait_for_job(job.id, timeout=WAIT_SECS, interval=POLL_SECS)
+    finally:
+        stop.set()
+        worker.join(timeout=30)
+    assert not worker.is_alive()
+    assert failed.status == "failed"
+
+    # The new list filters: by task, and by replayed state.
+    unreplayed = qf.dlq.list_dead_letters(task_name=task, replayed=False, limit=100).dead_letters
+    assert [d.job_id for d in unreplayed] == [job.id]
+    entry = unreplayed[0]
+    assert entry.replayed_at is None
+    assert qf.dlq.list_dead_letters(task_name=task, replayed=True, limit=100).dead_letters == []
+
+    results = qf.replay_dead_letters(queue=queue, task_name=task)
+    assert [r.dead_letter_id for r in results] == [entry.id]
+    assert results[0].error is None
+    assert results[0].job_id is not None and results[0].job_id != job.id
+    replayed_job = qf.jobs.get_job(results[0].job_id)
+    assert replayed_job.task_name == task
+    assert replayed_job.queue_name == queue
+    assert replayed_job.payload == {"doomed": True}
+
+    # Replayed entries flip lists and are never replayed twice.
+    assert qf.dlq.list_dead_letters(task_name=task, replayed=False, limit=100).dead_letters == []
+    after = qf.dlq.list_dead_letters(task_name=task, replayed=True, limit=100).dead_letters
+    assert [d.id for d in after] == [entry.id]
+    assert after[0].replay_job_id == results[0].job_id
+    assert qf.replay_dead_letters(queue=queue, task_name=task) == []
+
+    # Nothing handles the replayed job; sweep it so the queue does not linger.
+    assert qf.cancel_jobs(queue=queue, task_name=task) == 1
+    assert qf.jobs.get_job(results[0].job_id).status == "cancelled"

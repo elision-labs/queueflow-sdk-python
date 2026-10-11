@@ -666,3 +666,161 @@ class TestQueues(unittest.TestCase):
         stats = SimpleNamespace(queue="default", pending=2, scheduled=0, running=1, oldest_pending_age_secs=7)
         qf.system = SimpleNamespace(list_queues=lambda: SimpleNamespace(queues=[stats]))
         self.assertEqual(qf.queues(), [stats])
+
+
+# --- 0.5.0 server operations: bulk cancel, bulk replay, queue control, whoami
+
+import inspect as _inspect
+
+from queueflow.api.dlq_api import DlqApi
+from queueflow.api.jobs_api import JobsApi
+from queueflow.models.cancel_jobs_request import CancelJobsRequest
+from queueflow.models.replay_dead_letters_request import ReplayDeadLettersRequest
+
+
+class FakeBulkJobsApi:
+    def __init__(self, cancelled: int = 0) -> None:
+        self.requests: List[Any] = []
+        self.cancelled = cancelled
+
+    def cancel_jobs(self, req: Any) -> Any:
+        self.requests.append(req)
+        return SimpleNamespace(cancelled=self.cancelled)
+
+
+class FakeBulkDlqApi:
+    def __init__(self, results: Optional[List[Any]] = None) -> None:
+        self.requests: List[Any] = []
+        self.results = results or []
+
+    def replay_dead_letters(self, req: Any) -> Any:
+        self.requests.append(req)
+        return SimpleNamespace(results=self.results, replayed=len(self.results))
+
+
+class FakeSystemApi:
+    def __init__(self) -> None:
+        self.paused: List[str] = []
+        self.resumed: List[str] = []
+
+    def pause_queue(self, queue: str) -> Any:
+        self.paused.append(queue)
+        return SimpleNamespace(queue=queue, paused=True, running=1, pending=3)
+
+    def resume_queue(self, queue: str) -> Any:
+        self.resumed.append(queue)
+        return SimpleNamespace(queue=queue, paused=False, running=1, pending=3)
+
+    def who_am_i(self) -> Any:
+        return SimpleNamespace(tenant="tenant1", access="read_write")
+
+
+class TestCancelJobs(unittest.TestCase):
+    def test_returns_the_cancelled_count(self) -> None:
+        qf = QueueFlow("http://qf.test", "t")
+        qf.jobs = FakeBulkJobsApi(cancelled=7)
+        self.assertEqual(qf.cancel_jobs(queue="orders"), 7)
+
+    def test_sends_a_real_request_model_with_every_filter(self) -> None:
+        qf = QueueFlow("http://qf.test", "t")
+        qf.jobs = FakeBulkJobsApi()
+        qf.cancel_jobs(
+            queue="orders",
+            task_name="send_email",
+            status="pending",
+            created_after="2026-01-01T00:00:00Z",
+            created_before="2026-02-01T00:00:00Z",
+            limit=25,
+        )
+        req = qf.jobs.requests[0]
+        self.assertIsInstance(req, CancelJobsRequest)
+        self.assertEqual(req.queue, "orders")
+        self.assertEqual(req.task_name, "send_email")
+        self.assertEqual(req.status, "pending")
+        self.assertEqual(req.limit, 25)
+        self.assertIsNotNone(req.created_after)
+        self.assertIsNotNone(req.created_before)
+
+    def test_no_filters_sends_no_values(self) -> None:
+        # Absent filters carry no value, so the server applies its own
+        # defaults (every non-terminal status, limit 100).
+        qf = QueueFlow("http://qf.test", "t")
+        qf.jobs = FakeBulkJobsApi()
+        qf.cancel_jobs()
+        self.assertTrue(all(v is None for v in qf.jobs.requests[0].to_dict().values()))
+
+    def test_limit_zero_is_forwarded_not_dropped(self) -> None:
+        qf = QueueFlow("http://qf.test", "t")
+        qf.jobs = FakeBulkJobsApi()
+        qf.cancel_jobs(limit=0)
+        self.assertEqual(qf.jobs.requests[0].limit, 0)
+
+
+class TestReplayDeadLetters(unittest.TestCase):
+    def test_unwraps_the_results_list(self) -> None:
+        results = [
+            SimpleNamespace(dead_letter_id=1, job_id="job-9", error=None),
+            SimpleNamespace(dead_letter_id=2, job_id=None, error="original job purged"),
+        ]
+        qf = QueueFlow("http://qf.test", "t")
+        qf.dlq = FakeBulkDlqApi(results)
+        self.assertEqual(qf.replay_dead_letters(queue="orders"), results)
+
+    def test_sends_a_real_request_model_with_every_filter(self) -> None:
+        qf = QueueFlow("http://qf.test", "t")
+        qf.dlq = FakeBulkDlqApi()
+        qf.replay_dead_letters(
+            queue="orders",
+            task_name="send_email",
+            created_after="2026-01-01T00:00:00Z",
+            created_before="2026-02-01T00:00:00Z",
+            limit=10,
+        )
+        req = qf.dlq.requests[0]
+        self.assertIsInstance(req, ReplayDeadLettersRequest)
+        self.assertEqual(req.queue, "orders")
+        self.assertEqual(req.task_name, "send_email")
+        self.assertEqual(req.limit, 10)
+        self.assertIsNotNone(req.created_after)
+        self.assertIsNotNone(req.created_before)
+
+    def test_no_filters_sends_no_values(self) -> None:
+        qf = QueueFlow("http://qf.test", "t")
+        qf.dlq = FakeBulkDlqApi()
+        self.assertEqual(qf.replay_dead_letters(), [])
+        self.assertTrue(all(v is None for v in qf.dlq.requests[0].to_dict().values()))
+
+
+class TestQueueControlAndWhoAmI(unittest.TestCase):
+    def test_pause_queue_forwards_the_name_and_returns_the_response(self) -> None:
+        qf = QueueFlow("http://qf.test", "t")
+        qf.system = FakeSystemApi()
+        resp = qf.pause_queue("orders")
+        self.assertEqual(qf.system.paused, ["orders"])
+        self.assertTrue(resp.paused)
+        self.assertEqual((resp.queue, resp.running, resp.pending), ("orders", 1, 3))
+
+    def test_resume_queue_forwards_the_name_and_returns_the_response(self) -> None:
+        qf = QueueFlow("http://qf.test", "t")
+        qf.system = FakeSystemApi()
+        resp = qf.resume_queue("orders")
+        self.assertEqual(qf.system.resumed, ["orders"])
+        self.assertFalse(resp.paused)
+
+    def test_whoami_returns_tenant_and_access(self) -> None:
+        qf = QueueFlow("http://qf.test", "t")
+        qf.system = FakeSystemApi()
+        me = qf.whoami()
+        self.assertEqual((me.tenant, me.access), ("tenant1", "read_write"))
+
+
+class TestListFilters(unittest.TestCase):
+    """The README documents these generated list parameters; guard against drift."""
+
+    def test_list_jobs_accepts_task_name(self) -> None:
+        self.assertIn("task_name", _inspect.signature(JobsApi.list_jobs).parameters)
+
+    def test_list_dead_letters_accepts_task_name_and_replayed(self) -> None:
+        params = _inspect.signature(DlqApi.list_dead_letters).parameters
+        self.assertIn("task_name", params)
+        self.assertIn("replayed", params)

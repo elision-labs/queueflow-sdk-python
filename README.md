@@ -68,8 +68,9 @@ The generated per-tag clients hang off the facade for anything the helpers do no
 | `qf.create_job(task, payload=None, priority=None, max_retries=None, timeout=None, queue=None, retry_backoff=None, retry_delay_secs=None, retry_max_delay_secs=None, jitter_factor=None, idempotency_key=None, run_at=None)` | Enqueue a job and return the created `Job`. |
 | `qf.wait_for_job(job_id, timeout=60.0, interval=0.5)` | Poll until `completed` / `failed` / `cancelled`; raises `WaitTimeout`. |
 | `qf.jobs.get_job(id)` | Fetch a job. |
-| `qf.jobs.list_jobs(status=..., queue=..., limit=..., offset=..., order_by=..., include_total=..., cursor=..., created_after=..., created_before=...)` | List jobs. |
+| `qf.jobs.list_jobs(status=..., queue=..., task_name=..., limit=..., offset=..., order_by=..., include_total=..., cursor=..., created_after=..., created_before=...)` | List jobs. |
 | `qf.jobs.cancel_job(id)` | Cancel a job. |
+| `qf.cancel_jobs(queue=None, task_name=None, status=None, created_after=None, created_before=None, limit=None)` | Cancel every matching non-terminal job of your tenant, oldest first, up to `limit` (default 100); returns the count. |
 | `qf.jobs.create_batch_jobs(CreateBatchJobsRequest(...))` | Enqueue up to 1000 jobs at once. |
 
 `idempotency_key` is sent as the `Idempotency-Key` header: re-submitting the same key returns the
@@ -77,6 +78,16 @@ original job instead of creating a duplicate. `run_at` (a `datetime`) delays the
 
 List responses carry `next_cursor` when there are more pages; pass it back as `cursor` for keyset
 pagination (cheaper than deep `offset`).
+
+`cancel_jobs` takes optional filters that combine: `queue`, `task_name`, `status` (`pending`,
+`retrying` or `running`; all three when omitted, a terminal status is a 400) and the half-open
+`datetime` window `[created_after, created_before)`. A count below `limit` means the matching set is
+exhausted, so loop until then to drain a large backlog:
+
+```python
+while qf.cancel_jobs(queue="orders", task_name="send_email", limit=500) == 500:
+    pass
+```
 
 ### Workflows
 
@@ -197,22 +208,57 @@ Rules the runtime enforces, and that any hand-rolled loop over `qf.worker` must 
 
 | Method | Description |
 | --- | --- |
-| `qf.dlq.list_dead_letters(...)` / `get_dead_letter(id)` | Inspect terminally-failed jobs. |
+| `qf.dlq.list_dead_letters(task_name=..., replayed=..., limit=..., offset=..., order_by=..., include_total=..., cursor=..., created_after=..., created_before=...)` / `get_dead_letter(id)` | Inspect terminally-failed jobs. `replayed=False` lists only entries not yet replayed, `True` only the replayed ones. |
 | `qf.replay_dead_letter(id)` | Re-run one as a fresh job and return it (at most once; a second replay is a 409). |
+| `qf.replay_dead_letters(queue=None, task_name=None, created_after=None, created_before=None, limit=None)` | Replay every unreplayed entry matching the filter, oldest first, up to `limit` (default 100). Returns a `ReplayedDeadLetter` per entry: `job_id` on success, otherwise `error`. |
+
+```python
+for r in qf.replay_dead_letters(queue="orders", task_name="send_email"):
+    if r.error:
+        print("dead letter", r.dead_letter_id, "not replayed:", r.error)
+    else:
+        print("dead letter", r.dead_letter_id, "replayed as", r.job_id)
+```
+
+Already-replayed entries are never considered again, so repeating the call walks a large backlog;
+an empty list means nothing was left to replay.
 
 ### System
 
 ```python
+qf.whoami()              # the tenant this token is scoped to and its access level
 qf.system.get_stats()    # engine counters
 qf.system.list_tasks()   # registered task handler names
-qf.queues()              # live per-queue backlog: pending, scheduled, running, oldest pending age
+qf.queues()              # live per-queue backlog: pending, scheduled, running, oldest pending age, paused
+qf.pause_queue(name)     # stop claims of your jobs on a queue; running jobs finish
+qf.resume_queue(name)    # let claims flow again
 qf.health_api.get_health()
 qf.health_api.get_ready()
 ```
 
-`qf.queues()` (`GET /api/v1/queues`) returns a `QueueStats` per queue that currently has
-non-terminal jobs, so you can decide whether to add workers; idle queues are omitted.
-`qf.system.list_queues()` is the raw call.
+`qf.whoami()` (`GET /api/v1/whoami`) returns a `WhoAmIResponse` with `tenant` and `access`
+(`read_write`, or `read_only` for a read-only key), handy for validating a credential at startup.
+
+`qf.queues()` (`GET /api/v1/queues`) returns a `QueueStats` per queue so you can decide whether to
+add workers. A 0.5.0 or later server lists every queue your tenant has enqueued to (drained ones
+with zero counts); older servers list only queues with non-terminal jobs. Its `paused` flag says
+whether claims are paused for your tenant. `qf.system.list_queues()` is the raw call.
+
+`qf.pause_queue(name)` / `qf.resume_queue(name)` (`POST /api/v1/queues/{queue}/pause` and
+`/resume`) gate workers' claims of your tenant's jobs on that queue. Pausing lets running jobs
+finish while pending ones wait, so the queue is drained once the returned `running` count reaches
+zero; resuming wakes parked workers immediately. Both are idempotent and return a
+`QueueControlResponse` (`queue`, `paused`, `running`, `pending`).
+
+```python
+import time
+
+qf.pause_queue("orders")
+while qf.pause_queue("orders").running > 0:   # idempotent, so it doubles as a status poll
+    time.sleep(1)
+deploy_new_handlers()
+qf.resume_queue("orders")
+```
 
 ## Authentication
 
@@ -257,9 +303,10 @@ closes it (terminal status or the 15-minute cap). Use `wait_for_job` (polling) i
 `test/test_live.py` runs the facade against a real QueueFlow server (started with the default
 `queueflow serve`, i.e. `--mode all`, so the built-in `echo` handler is registered). It creates
 and waits on an `echo` job, checks idempotent re-creation, runs a two-step workflow, exercises the
-cron and dead-letter endpoints, reads stats, and runs `run_worker` against a dedicated queue. The
-tests are marked `live` and skip themselves unless `QUEUEFLOW_URL` is set, so plain `pytest` and
-CI stay offline.
+cron and dead-letter endpoints, reads stats, runs `run_worker` against a dedicated queue, and
+exercises `whoami`, bulk cancel, queue pause/resume and bulk dead-letter replay, each scoped to a
+queue unique to the run. The tests are marked `live` and skip themselves unless `QUEUEFLOW_URL` is
+set, so plain `pytest` and CI stay offline.
 
 ```bash
 QUEUEFLOW_URL=http://localhost:8000 \
