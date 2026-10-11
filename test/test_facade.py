@@ -291,24 +291,39 @@ class FakeWorkerApi:
         heartbeat_status: str = "running",
         lease_error: Optional[Exception] = None,
         complete_error: Optional[Exception] = None,
+        block_on_empty: bool = False,
+        stop_on_empty: bool = True,
     ) -> None:
         self.pending = list(leases or [])
         self.heartbeat_status = heartbeat_status
         self.lease_error = lease_error
         self.complete_error = complete_error
+        # Emulate the server's long poll (which urllib3 cannot interrupt):
+        # sleep for the requested wait_secs when the queue is empty.
+        self.block_on_empty = block_on_empty
+        self.stop_on_empty = stop_on_empty
         self.completes: List[Any] = []
         self.fails: List[Any] = []
         self.heartbeats = 0
+        self.lease_requests: List[Any] = []
+        self.lease_timeouts: List[Any] = []
         self.stop = threading.Event()
 
-    def lease_jobs(self, queue: str, req: Any) -> Any:
+    def lease_jobs(self, queue: str, req: Any, _request_timeout: Any = None) -> Any:
+        self.lease_requests.append(req)
+        self.lease_timeouts.append(_request_timeout)
         if self.lease_error is not None:
             err, self.lease_error = self.lease_error, None
             raise err
         if not self.pending:
-            self.stop.set()
+            if self.stop_on_empty:
+                self.stop.set()
+            if self.block_on_empty:
+                _time.sleep(req.wait_secs or 0)
             return SimpleNamespace(jobs=[])
-        return SimpleNamespace(jobs=[self.pending.pop(0)])
+        take = min(req.max_jobs or 1, len(self.pending))
+        leased, self.pending = self.pending[:take], self.pending[take:]
+        return SimpleNamespace(jobs=leased)
 
     def heartbeat_job(self, job_id: str, req: Any) -> Any:
         self.heartbeats += 1
@@ -424,3 +439,230 @@ class TestWorkerRuntime(unittest.TestCase):
         api = FakeWorkerApi([lease()], complete_error=RuntimeError("engine restarting"))
         self.run_until_drained(api, {"echo": lambda job: {"ok": True}})
         self.assertEqual(api.fails, [])  # lease expiry redelivers; no fail() call
+
+
+class TestWorkerConcurrency(unittest.TestCase):
+    def run_until_drained(self, api: FakeWorkerApi, handlers: Dict[str, Any], **kw: Any) -> Any:
+        return worker_client(api).run_worker("q", handlers, stop=api.stop, wait_secs=0, **kw)
+
+    def test_default_concurrency_is_one_job_per_lease(self) -> None:
+        api = FakeWorkerApi([lease(job_id="j1"), lease(job_id="j2")])
+        self.run_until_drained(api, {"echo": lambda job: {}})
+        self.assertEqual([r.max_jobs for r in api.lease_requests[:2]], [1, 1])
+        self.assertEqual(len(api.completes), 2)
+
+    def test_handlers_run_in_parallel_up_to_concurrency(self) -> None:
+        # A barrier of 3 only passes if three handlers run at the same time.
+        barrier = threading.Barrier(3, timeout=5.0)
+
+        def handler(job: Any) -> Dict[str, Any]:
+            barrier.wait()
+            return {"id": job.id}
+
+        api = FakeWorkerApi([lease(job_id=f"j{i}") for i in range(3)])
+        result = self.run_until_drained(api, {"echo": handler}, concurrency=3)
+
+        self.assertEqual(api.lease_requests[0].max_jobs, 3, "lease asks for every free slot")
+        self.assertEqual(sorted(req.result["id"] for _, req in api.completes), ["j0", "j1", "j2"])
+        self.assertEqual(result.unfinished, [])
+
+    def test_in_flight_never_exceeds_concurrency(self) -> None:
+        active = {"now": 0, "max": 0}
+        guard = threading.Lock()
+
+        def handler(job: Any) -> Dict[str, Any]:
+            with guard:
+                active["now"] += 1
+                active["max"] = max(active["max"], active["now"])
+            _time.sleep(0.05)
+            with guard:
+                active["now"] -= 1
+            return {}
+
+        api = FakeWorkerApi([lease(job_id=f"j{i}") for i in range(6)])
+        self.run_until_drained(api, {"echo": handler}, concurrency=2)
+
+        self.assertEqual(active["max"], 2, "concurrency cap exceeded")
+        self.assertEqual(len(api.completes), 6)
+        self.assertTrue(all(r.max_jobs <= 2 for r in api.lease_requests))
+
+    def test_lease_asks_only_for_free_slots(self) -> None:
+        # Two jobs leased into two slots; the second lease (after one job
+        # finishes while the other still runs) must ask for a single job.
+        release = threading.Event()
+        started = threading.Event()
+
+        def handler(job: Any) -> Dict[str, Any]:
+            if job.id == "slow":
+                started.set()
+                release.wait(5.0)
+            return {}
+
+        api = FakeWorkerApi([lease(job_id="slow"), lease(job_id="quick"), lease(job_id="third")])
+        api.stop_on_empty = False
+        api.block_on_empty = True
+        worker = threading.Thread(
+            target=lambda: self.run_until_drained(api, {"echo": handler}, concurrency=2, poll_wait_secs=0),
+            daemon=True,
+        )
+        worker.start()
+        self.assertTrue(started.wait(5.0))
+        deadline = _time.monotonic() + 5.0
+        while len(api.completes) < 2 and _time.monotonic() < deadline:
+            _time.sleep(0.01)
+        self.assertEqual(len(api.completes), 2, "quick and third should have finished")
+        self.assertEqual(api.lease_requests[0].max_jobs, 2)
+        self.assertEqual(api.lease_requests[1].max_jobs, 1, "one slot is still busy")
+        release.set()
+        api.stop.set()
+        worker.join(10.0)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(api.completes), 3)
+
+    def test_concurrency_below_one_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            worker_client(FakeWorkerApi()).run_worker("q", {}, concurrency=0)
+
+
+class TestWorkerStop(unittest.TestCase):
+    def test_wait_secs_is_capped_by_poll_wait_secs_when_stop_is_given(self) -> None:
+        api = FakeWorkerApi()
+        worker_client(api).run_worker("q", {}, stop=api.stop, wait_secs=20, poll_wait_secs=5)
+        self.assertEqual(api.lease_requests[0].wait_secs, 5)
+        # The request timeout follows the effective wait, not the client default.
+        self.assertEqual(api.lease_timeouts[0], 40.0)
+
+    def test_poll_wait_secs_never_raises_wait_secs(self) -> None:
+        api = FakeWorkerApi()
+        worker_client(api).run_worker("q", {}, stop=api.stop, wait_secs=2, poll_wait_secs=5)
+        self.assertEqual(api.lease_requests[0].wait_secs, 2)
+        self.assertEqual(api.lease_timeouts[0], 37.0)
+
+    def test_stop_latency_is_bounded_by_poll_wait_secs(self) -> None:
+        # The fake sleeps out the full wait like a real long poll; stop must
+        # still take effect within about one poll_wait_secs, not wait_secs.
+        api = FakeWorkerApi(block_on_empty=True, stop_on_empty=False)
+        worker = threading.Thread(
+            target=worker_client(api).run_worker,
+            args=("q", {}),
+            kwargs={"stop": api.stop, "wait_secs": 20, "poll_wait_secs": 1},
+            daemon=True,
+        )
+        worker.start()
+        _time.sleep(0.1)
+        t0 = _time.monotonic()
+        api.stop.set()
+        worker.join(5.0)
+        self.assertFalse(worker.is_alive(), "worker did not stop")
+        self.assertLess(_time.monotonic() - t0, 2.0)
+
+    def test_stop_drains_in_flight_handlers_and_reports_them(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+
+        def handler(job: Any) -> Dict[str, Any]:
+            started.set()
+            release.wait(5.0)
+            return {"ok": True}
+
+        # With one slot and one job in flight no further lease happens, so the
+        # test asks for the stop itself once the handler is running.
+        api = FakeWorkerApi([lease()])
+        results: List[Any] = []
+        worker = threading.Thread(
+            target=lambda: results.append(
+                worker_client(api).run_worker("q", {"echo": handler}, stop=api.stop, wait_secs=0)
+            ),
+            daemon=True,
+        )
+        worker.start()
+        self.assertTrue(started.wait(5.0))
+        api.stop.set()
+        _time.sleep(0.1)
+        self.assertTrue(worker.is_alive(), "must keep draining while the handler runs")
+        self.assertEqual(api.completes, [])
+        release.set()
+        worker.join(5.0)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results[0].unfinished, [])
+        self.assertEqual(len(api.completes), 1)
+        self.assertEqual(api.completes[0][1].result, {"ok": True})
+
+    def test_drain_timeout_abandons_slow_handlers_and_reports_them(self) -> None:
+        seen: Dict[str, Any] = {}
+
+        def handler(job: Any, ctx: Any) -> Dict[str, Any]:
+            seen["ctx"] = ctx
+            api.stop.set()  # stop arrives while this handler is still running
+            deadline = _time.monotonic() + 5.0
+            while not ctx.cancelled and _time.monotonic() < deadline:
+                _time.sleep(0.01)
+            seen["cancelled"] = ctx.cancelled
+            return {"late": True}
+
+        api = FakeWorkerApi([lease(job_id="slow")])
+        t0 = _time.monotonic()
+        result = worker_client(api).run_worker(
+            "q", {"echo": handler}, stop=api.stop, wait_secs=0, drain_timeout=0.2
+        )
+        self.assertLess(_time.monotonic() - t0, 3.0, "drain must give up after drain_timeout")
+        self.assertEqual([j.id for j in result.unfinished], ["slow"])
+        self.assertTrue(seen["ctx"].cancelled, "an abandoned handler's ctx.cancelled must flip")
+        # Let the abandoned handler notice and return: its outcome must not be reported.
+        deadline = _time.monotonic() + 2.0
+        while "cancelled" not in seen and _time.monotonic() < deadline:
+            _time.sleep(0.01)
+        self.assertEqual(api.completes, [])
+        self.assertEqual(api.fails, [])
+
+    def test_auth_errors_still_raise_after_draining(self) -> None:
+        api = FakeWorkerApi(lease_error=ApiException(status=401, reason="unauthorized"))
+        with self.assertRaises(ApiException):
+            worker_client(api).run_worker("q", {}, stop=api.stop, wait_secs=0)
+
+
+class TestTimeouts(unittest.TestCase):
+    class FakeRest:
+        def __init__(self) -> None:
+            self.calls: List[Dict[str, Any]] = []
+
+        def request(self, method: str, url: str, headers: Any = None, body: Any = None,
+                    post_params: Any = None, _request_timeout: Any = None) -> Any:
+            self.calls.append({"method": method, "url": url, "_request_timeout": _request_timeout})
+            return SimpleNamespace(status=200, reason="OK", data=b"{}")
+
+    def test_default_request_timeout_is_30s(self) -> None:
+        qf = QueueFlow("http://qf.test", "t")
+        self.assertEqual(qf.timeout, 30.0)
+        rest = self.FakeRest()
+        qf._client.rest_client = rest
+        qf._client.call_api("GET", "http://qf.test/health")
+        self.assertEqual(rest.calls[0]["_request_timeout"], 30.0)
+
+    def test_explicit_per_call_timeout_wins(self) -> None:
+        qf = QueueFlow("http://qf.test", "t")
+        rest = self.FakeRest()
+        qf._client.rest_client = rest
+        qf._client.call_api("GET", "http://qf.test/health", _request_timeout=7.0)
+        self.assertEqual(rest.calls[0]["_request_timeout"], 7.0)
+
+    def test_client_timeout_is_configurable_and_applies_to_the_worker_client(self) -> None:
+        qf = QueueFlow("http://qf.test", "t", worker_token="w", timeout=(3.0, 90.0))
+        self.assertEqual(qf._client.default_timeout, (3.0, 90.0))
+        self.assertIsNotNone(qf._worker_client)
+        self.assertEqual(qf._worker_client.default_timeout, (3.0, 90.0))
+
+    def test_timeout_none_disables_the_default(self) -> None:
+        qf = QueueFlow("http://qf.test", "t", timeout=None)
+        rest = self.FakeRest()
+        qf._client.rest_client = rest
+        qf._client.call_api("GET", "http://qf.test/health")
+        self.assertIsNone(rest.calls[0]["_request_timeout"])
+
+
+class TestQueues(unittest.TestCase):
+    def test_queues_unwraps_the_response(self) -> None:
+        qf = QueueFlow("http://qf.test", "t")
+        stats = SimpleNamespace(queue="default", pending=2, scheduled=0, running=1, oldest_pending_age_secs=7)
+        qf.system = SimpleNamespace(list_queues=lambda: SimpleNamespace(queues=[stats]))
+        self.assertEqual(qf.queues(), [stats])

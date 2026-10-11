@@ -52,8 +52,11 @@ qf = QueueFlow(
     base_url,             # required, e.g. "http://localhost:8000"
     token,                # required: tenant bearer token (any non-empty token on the dev server)
     worker_token=None,    # credential for qf.worker and run_worker (defaults to token; dev mode only)
+    timeout=30.0,         # default per-request timeout in seconds; a (connect, read) pair or None also work
 )
 ```
+
+Any generated api method accepts `_request_timeout=` to override the default for one call.
 
 The generated per-tag clients hang off the facade for anything the helpers do not cover:
 `qf.jobs`, `qf.workflows`, `qf.worker`, `qf.cron`, `qf.dlq`, `qf.system`, `qf.health_api`.
@@ -127,15 +130,49 @@ def transcode(job, ctx):
     return {"ok": True}
 
 stop = threading.Event()                          # set it (e.g. from a signal handler) to drain
-qf.run_worker("orders", {"send_email": send_email, "transcode": transcode}, stop=stop)
+result = qf.run_worker(
+    "orders",
+    {"send_email": send_email, "transcode": transcode},
+    stop=stop,
+    concurrency=4,
+)
+for job in result.unfinished:                     # handlers still running when the drain gave up
+    print("abandoned", job.id)
 ```
 
-`run_worker(queue, handlers, lease_secs=30, wait_secs=20, stop=None, on_error=None)` leases one
-job at a time, heartbeats each in-flight job at half the lease interval, stops reporting when the
+```python
+run_worker(
+    queue, handlers,
+    lease_secs=30,        # lease per job; each in-flight job is heartbeated at half this
+    wait_secs=20,         # long-poll wait when the queue is empty
+    stop=None,            # threading.Event: set it to stop
+    on_error=None,        # called on transient lease errors (default: throttled log)
+    concurrency=1,        # handlers running at once, on a ThreadPoolExecutor
+    poll_wait_secs=5,     # cap on wait_secs while `stop` is provided (bounds stop latency)
+    drain_timeout=30.0,   # seconds to wait for in-flight handlers after stop
+) -> WorkerRunResult      # .unfinished: jobs still running when the drain gave up
+```
+
+`run_worker` heartbeats each in-flight job at half the lease interval, stops reporting when the
 lease is lost, and applies the server's retry policy on errors. Handlers take `(job)` or
 `(job, ctx)` and return the result dict (or `None` for `{}`). Delivery is at-least-once, so make
 handlers idempotent. The low-level calls (`qf.worker.lease_jobs`, `heartbeat_job`, `complete_job`,
 `fail_job`) are also exposed.
+
+Concurrency: up to `concurrency` handlers run at once. Each lease asks for as many jobs as there
+are free slots, and no lease is issued while every slot is busy.
+
+Stop and drain: set `stop`. The generated urllib3 client cannot cancel an in-flight long poll, so
+while `stop` is provided each lease waits at most `poll_wait_secs` (never more than `wait_secs`),
+which bounds stop latency to about that long; without `stop`, the full `wait_secs` is used. After
+the loop exits, handlers already running get up to `drain_timeout` seconds to finish and report.
+Any handler still running after that is abandoned: its `ctx.cancelled` flips, nothing is reported
+(the lease expires and the server redelivers), and the job is listed in the returned
+`WorkerRunResult.unfinished`. Python cannot kill a thread, so an abandoned handler keeps its pool
+thread until it returns; long handlers should check `ctx.cancelled`.
+
+Timeouts: every request uses the client-wide `timeout` (30s by default, see Client), except the
+lease long poll, which gets its own timeout of the effective wait plus 35 seconds.
 
 Rules the runtime enforces, and that any hand-rolled loop over `qf.worker` must honour too:
 
@@ -168,9 +205,14 @@ Rules the runtime enforces, and that any hand-rolled loop over `qf.worker` must 
 ```python
 qf.system.get_stats()    # engine counters
 qf.system.list_tasks()   # registered task handler names
+qf.queues()              # live per-queue backlog: pending, scheduled, running, oldest pending age
 qf.health_api.get_health()
 qf.health_api.get_ready()
 ```
+
+`qf.queues()` (`GET /api/v1/queues`) returns a `QueueStats` per queue that currently has
+non-terminal jobs, so you can decide whether to add workers; idle queues are omitted.
+`qf.system.list_queues()` is the raw call.
 
 ## Authentication
 

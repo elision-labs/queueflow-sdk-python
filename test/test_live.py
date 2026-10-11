@@ -165,3 +165,65 @@ def test_worker_runtime_completes_job_on_dedicated_queue(qf: QueueFlow, suffix: 
     assert handled == [job.id]
     assert done.status == "completed", f"error: {done.error_message}"
     assert done.result == {**payload, "handled": True}
+
+
+def test_worker_runtime_runs_jobs_concurrently_up_to_the_cap(qf: QueueFlow, suffix: str) -> None:
+    queue = f"sdk-live-cq-{suffix}"
+    task = f"sdk-live-ctask-{suffix}"
+    count = 4
+
+    jobs = [qf.create_job(task, payload={"i": i}, queue=queue) for i in range(count)]
+
+    active = {"now": 0, "max": 0}
+    guard = threading.Lock()
+    started: List[str] = []
+    stop = threading.Event()
+    results: List[Any] = []
+
+    def handler(leased: Any) -> Dict[str, Any]:
+        with guard:
+            active["now"] += 1
+            active["max"] = max(active["max"], active["now"])
+            started.append(leased.id)
+        # Long enough that the four leases overlap in time.
+        time.sleep(0.75)
+        with guard:
+            active["now"] -= 1
+        return {**(leased.payload or {}), "handled": True}
+
+    worker = threading.Thread(
+        target=lambda: results.append(
+            qf.run_worker(
+                queue,
+                {task: handler},
+                lease_secs=10,
+                wait_secs=20,
+                stop=stop,
+                concurrency=count,
+                poll_wait_secs=1,
+            )
+        ),
+        daemon=True,
+    )
+    worker.start()
+    try:
+        finished = [qf.wait_for_job(job.id, timeout=WAIT_SECS, interval=POLL_SECS) for job in jobs]
+    finally:
+        t0 = time.monotonic()
+        stop.set()
+        worker.join(timeout=30)
+
+    assert not worker.is_alive(), "worker loop did not stop"
+    # Stop latency is bounded by poll_wait_secs (1s here), not wait_secs (20s).
+    assert time.monotonic() - t0 < 5.0, "stop waited for the full long poll"
+    assert results and results[0].unfinished == []
+    assert sorted(started) == sorted(job.id for job in jobs)
+    assert active["max"] > 1, f"handlers never overlapped (max active {active['max']})"
+    assert active["max"] <= count, f"concurrency cap exceeded ({active['max']} > {count})"
+    for job in finished:
+        assert job.status == "completed", f"job {job.id}: {job.error_message}"
+        assert job.result["handled"] is True
+
+    queues = qf.queues()
+    assert isinstance(queues, list)
+    assert not any(q.queue == queue for q in queues), "a drained queue must not be listed"

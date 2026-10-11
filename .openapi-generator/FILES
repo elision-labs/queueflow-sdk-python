@@ -1,10 +1,4 @@
-.github/workflows/python.yml
 .gitignore
-.gitlab-ci.yml
-.openapi-generator-ignore
-.travis.yml
-FACADE.md
-README.md
 docs/BackoffStrategy.md
 docs/CompleteJobRequest.md
 docs/CreateBatchJobsRequest.md
@@ -39,6 +33,8 @@ docs/ListJobsResponse.md
 docs/ListWorkflowsResponse.md
 docs/OnFailure.md
 docs/OnSuccess.md
+docs/QueueStats.md
+docs/QueuesResponse.md
 docs/ReadyStatus.md
 docs/ReplayDeadLetterResponse.md
 docs/StatsSnapshot.md
@@ -53,8 +49,6 @@ docs/WorkflowStep.md
 docs/WorkflowStepState.md
 docs/WorkflowStepStatesResponse.md
 docs/WorkflowsApi.md
-git_push.sh
-pyproject.toml
 queueflow/__init__.py
 queueflow/api/__init__.py
 queueflow/api/cron_api.py
@@ -100,6 +94,8 @@ queueflow/models/list_jobs_response.py
 queueflow/models/list_workflows_response.py
 queueflow/models/on_failure.py
 queueflow/models/on_success.py
+queueflow/models/queue_stats.py
+queueflow/models/queues_response.py
 queueflow/models/ready_status.py
 queueflow/models/replay_dead_letter_response.py
 queueflow/models/stats_snapshot.py
@@ -152,6 +148,8 @@ test/test_list_jobs_response.py
 test/test_list_workflows_response.py
 test/test_on_failure.py
 test/test_on_success.py
+test/test_queue_stats.py
+test/test_queues_response.py
 test/test_ready_status.py
 test/test_replay_dead_letter_response.py
 test/test_stats_snapshot.py
