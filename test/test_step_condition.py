@@ -42,12 +42,12 @@ class TestStepCondition(unittest.TestCase):
                                 not = , 
                                 op = 'eq', 
                                 path = '', 
-                                value = queueflow.models.value.value(), )
+                                value = null, )
                             ], 
                         not = , 
                         op = 'eq', 
                         path = '', 
-                        value = queueflow.models.value.value(), )
+                        value = null, )
                     ],
                 any = [
                     queueflow.models.step_condition.StepCondition(
@@ -56,12 +56,12 @@ class TestStepCondition(unittest.TestCase):
                                 not = , 
                                 op = 'eq', 
                                 path = '', 
-                                value = queueflow.models.value.value(), )
+                                value = null, )
                             ], 
                         not = , 
                         op = 'eq', 
                         path = '', 
-                        value = queueflow.models.value.value(), )
+                        value = null, )
                     ],
                 var_not = queueflow.models.step_condition.StepCondition(
                     all = [
@@ -71,17 +71,17 @@ class TestStepCondition(unittest.TestCase):
                                 ], 
                             op = 'eq', 
                             path = '', 
-                            value = queueflow.models.value.value(), )
+                            value = null, )
                         ], 
                     any = [
                         
                         ], 
                     op = 'eq', 
                     path = '', 
-                    value = queueflow.models.value.value(), ),
+                    value = null, ),
                 op = 'eq',
                 path = '',
-                value = queueflow.models.value.value()
+                value = None
             )
         else:
             return StepCondition(

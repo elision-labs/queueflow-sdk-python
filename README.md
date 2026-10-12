@@ -365,13 +365,6 @@ cannot stream: the generated client buffers the whole SSE response until the ser
 (terminal status or the 15-minute cap). Use `wait_for_job` / `wait_for_workflow` (polling) instead,
 or the `*_without_preload_content` variants with a hand-rolled SSE parser.
 
-**Condition values must be JSON objects.** The server's 0.6.0 OpenAPI spec types
-`StepCondition.value` as `object`, so the generated `models.StepCondition` rejects a scalar or array
-`value` (`when={"path": "fraud.score", "op": "gt", "value": 0.8}` raises `WorkflowValidationError`
-locally, and a workflow created with such a condition through another client cannot be fetched with
-this SDK). `exists` needs no value, and `eq` / `ne` / `contains` work with object values. A spec fix
-on the server side lifts the restriction in a later release.
-
 ## Conformance tests
 
 `test/test_live.py` runs the facade against a real QueueFlow server (started with the default

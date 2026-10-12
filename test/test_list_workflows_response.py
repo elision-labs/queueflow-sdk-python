@@ -93,7 +93,7 @@ class TestListWorkflowsResponse(unittest.TestCase):
                                             not = , 
                                             op = 'eq', 
                                             path = '', 
-                                            value = queueflow.models.value.value(), )
+                                            value = null, )
                                         ], 
                                     any = [
                                         
@@ -101,7 +101,7 @@ class TestListWorkflowsResponse(unittest.TestCase):
                                     not = , 
                                     op = 'eq', 
                                     path = '', 
-                                    value = queueflow.models.value.value(), ), 
+                                    value = null, ), 
                                 workflow = queueflow.models.create_workflow_request.CreateWorkflowRequest(
                                     name = '', 
                                     steps = [
@@ -174,7 +174,7 @@ class TestListWorkflowsResponse(unittest.TestCase):
                                             not = , 
                                             op = 'eq', 
                                             path = '', 
-                                            value = queueflow.models.value.value(), )
+                                            value = null, )
                                         ], 
                                     any = [
                                         
@@ -182,7 +182,7 @@ class TestListWorkflowsResponse(unittest.TestCase):
                                     not = , 
                                     op = 'eq', 
                                     path = '', 
-                                    value = queueflow.models.value.value(), ), 
+                                    value = null, ), 
                                 workflow = queueflow.models.create_workflow_request.CreateWorkflowRequest(
                                     name = '', 
                                     steps = [

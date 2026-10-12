@@ -32,7 +32,7 @@ class StepCondition(BaseModel):
     var_not: Optional[StepCondition] = Field(default=None, alias="not")
     op: Optional[ConditionOp] = None
     path: Optional[StrictStr] = None
-    value: Optional[Dict[str, Any]] = None
+    value: Optional[Any] = None
     __properties: ClassVar[List[str]] = ["all", "any", "not", "op", "path", "value"]
 
     model_config = ConfigDict(

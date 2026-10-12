@@ -70,7 +70,7 @@ class TestWorkflowStep(unittest.TestCase):
                             not = , 
                             op = 'eq', 
                             path = '', 
-                            value = queueflow.models.value.value(), )
+                            value = null, )
                         ], 
                     any = [
                         
@@ -78,7 +78,7 @@ class TestWorkflowStep(unittest.TestCase):
                     not = , 
                     op = 'eq', 
                     path = '', 
-                    value = queueflow.models.value.value(), ),
+                    value = null, ),
                 workflow = queueflow.models.create_workflow_request.CreateWorkflowRequest(
                     context = {
                         'key' : null
@@ -124,7 +124,7 @@ class TestWorkflowStep(unittest.TestCase):
                                         not = , 
                                         op = 'eq', 
                                         path = '', 
-                                        value = queueflow.models.value.value(), )
+                                        value = null, )
                                     ], 
                                 any = [
                                     
@@ -132,7 +132,7 @@ class TestWorkflowStep(unittest.TestCase):
                                 not = , 
                                 op = 'eq', 
                                 path = '', 
-                                value = queueflow.models.value.value(), ), )
+                                value = null, ), )
                         ], 
                     timeout_secs = 0, )
             )

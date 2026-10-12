@@ -917,12 +917,15 @@ class TestWorkflowBuilderV2(unittest.TestCase):
         with self.assertRaisesRegex(WorkflowValidationError, "must be a dict or a StepCondition"):
             wf("w").step("a", "t", when="x exists")
 
-    def test_scalar_condition_values_are_rejected_with_a_hint(self) -> None:
-        # The server's 0.6.0 spec types StepCondition.value as `object`, so the
-        # generated model cannot carry a scalar. The error must say so rather
-        # than leak a bare pydantic message.
-        with self.assertRaisesRegex(WorkflowValidationError, "JSON object"):
-            wf("w").step("a", "t", when={"path": "fraud.score", "op": "gt", "value": 0.8})
+    def test_scalar_and_array_condition_values_reach_the_wire(self) -> None:
+        req = (
+            wf("w")
+            .step("a", "t", when={"path": "fraud.score", "op": "gt", "value": 0.8})
+            .step("b", "t", when={"path": "tier", "op": "in", "value": ["gold", "silver"]})
+            .build()
+        )
+        self.assertEqual(req.steps[0].when.value, 0.8)
+        self.assertEqual(req.steps[1].when.value, ["gold", "silver"])
 
     def test_fan_out_accepts_a_generated_model_and_checks_the_shape(self) -> None:
         fan_out = FanOut(path="fetch.items")
