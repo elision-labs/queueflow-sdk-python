@@ -10,6 +10,8 @@ Method | HTTP request | Description
 [**get_workflow_diagram**](WorkflowsApi.md#get_workflow_diagram) | **GET** /api/v1/workflows/{id}/diagram | 
 [**get_workflow_step_states**](WorkflowsApi.md#get_workflow_step_states) | **GET** /api/v1/workflows/{id}/steps | 
 [**list_workflows**](WorkflowsApi.md#list_workflows) | **GET** /api/v1/workflows | 
+[**retry_workflow**](WorkflowsApi.md#retry_workflow) | **POST** /api/v1/workflows/{id}/retry | 
+[**stream_workflow_events**](WorkflowsApi.md#stream_workflow_events) | **GET** /api/v1/workflows/{id}/events | Stream a workflow&#39;s progress as Server-Sent Events: one &#x60;status&#x60; event whenever the workflow or any step changes, until the workflow is terminal.
 
 
 # **cancel_workflow**
@@ -491,6 +493,161 @@ Name | Type | Description  | Notes
 |-------------|-------------|------------------|
 **200** | Page of workflows |  -  |
 **401** | Unauthorized |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **retry_workflow**
+> retry_workflow(id)
+
+
+
+### Example
+
+* Bearer (API Key) Authentication (bearerAuth):
+
+```python
+import queueflow
+from queueflow.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:8000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = queueflow.Configuration(
+    host = "http://localhost:8000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (API Key): bearerAuth
+configuration = queueflow.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with queueflow.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = queueflow.WorkflowsApi(api_client)
+    id = 'id_example' # str | Workflow id
+
+    try:
+        api_instance.retry_workflow(id)
+    except Exception as e:
+        print("Exception when calling WorkflowsApi->retry_workflow: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **id** | **str**| Workflow id | 
+
+### Return type
+
+void (empty response body)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**204** | The workflow is running again: every step that did not complete went back to pending and is re-scheduled; completed steps keep their results. The deadline, if any, is re-armed from the original timeout. |  -  |
+**401** | Unauthorized |  -  |
+**403** | Forbidden |  -  |
+**404** | Not found |  -  |
+**409** | The workflow is running or completed |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **stream_workflow_events**
+> WorkflowEvent stream_workflow_events(id)
+
+Stream a workflow's progress as Server-Sent Events: one `status` event whenever the workflow or any step changes, until the workflow is terminal.
+
+### Example
+
+* Bearer (API Key) Authentication (bearerAuth):
+
+```python
+import queueflow
+from queueflow.models.workflow_event import WorkflowEvent
+from queueflow.rest import ApiException
+from pprint import pprint
+
+# Defining the host is optional and defaults to http://localhost:8000
+# See configuration.py for a list of all supported configuration parameters.
+configuration = queueflow.Configuration(
+    host = "http://localhost:8000"
+)
+
+# The client must configure the authentication and authorization parameters
+# in accordance with the API server security policy.
+# Examples for each auth method are provided below, use the example that
+# satisfies your auth use case.
+
+# Configure Bearer authorization (API Key): bearerAuth
+configuration = queueflow.Configuration(
+    access_token = os.environ["BEARER_TOKEN"]
+)
+
+# Enter a context with an instance of the API client
+with queueflow.ApiClient(configuration) as api_client:
+    # Create an instance of the API class
+    api_instance = queueflow.WorkflowsApi(api_client)
+    id = 'id_example' # str | Workflow id
+
+    try:
+        # Stream a workflow's progress as Server-Sent Events: one `status` event whenever the workflow or any step changes, until the workflow is terminal.
+        api_response = api_instance.stream_workflow_events(id)
+        print("The response of WorkflowsApi->stream_workflow_events:\n")
+        pprint(api_response)
+    except Exception as e:
+        print("Exception when calling WorkflowsApi->stream_workflow_events: %s\n" % e)
+```
+
+
+
+### Parameters
+
+
+Name | Type | Description  | Notes
+------------- | ------------- | ------------- | -------------
+ **id** | **str**| Workflow id | 
+
+### Return type
+
+[**WorkflowEvent**](WorkflowEvent.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+ - **Content-Type**: Not defined
+ - **Accept**: text/event-stream, application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+**200** | SSE stream; each &#x60;status&#x60; event carries a WorkflowEvent (the workflow status and every step&#39;s state). The first event is the current state; the stream closes after the terminal one, or after 15 minutes (reconnect to keep following). |  -  |
+**401** | Unauthorized |  -  |
+**403** | Forbidden |  -  |
+**404** | Not found |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 

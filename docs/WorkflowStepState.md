@@ -6,8 +6,13 @@ Runtime status of one workflow step (the live progress view).
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**job_id** | **str** | The job executing this step, once one has been scheduled. | [optional] 
+**child_workflow_id** | **str** | The child workflow of a sub-workflow step, once spawned. | [optional] 
+**completed_at** | **datetime** | When the step reached a terminal status. | [optional] 
+**error** | **str** | Why the step failed, was skipped (&#x60;condition not met&#x60; for a false &#x60;when&#x60;) or was cancelled. | [optional] 
+**fan_out** | [**FanOutProgress**](FanOutProgress.md) | Progress of a fan-out step&#39;s children, once spawned. | [optional] 
+**job_id** | **str** | The job executing this step, once one has been scheduled (the first child, for a fan-out). | [optional] 
 **name** | **str** | The step&#39;s name (its address within the workflow). | 
+**started_at** | **datetime** | When the step was scheduled (its job or child workflow created). | [optional] 
 **status** | [**StepStatus**](StepStatus.md) |  | 
 
 ## Example

@@ -10,6 +10,7 @@ Name | Type | Description | Notes
 **metadata** | **Dict[str, object]** |  | [optional] 
 **name** | **str** |  | 
 **steps** | [**List[WorkflowStep]**](WorkflowStep.md) |  | 
+**timeout_secs** | **int** | Whole-workflow time budget in seconds. When it runs out the janitor cancels every unfinished step and fails the workflow with &#x60;workflow timed out&#x60;. Unset means no limit. | [optional] 
 
 ## Example
 

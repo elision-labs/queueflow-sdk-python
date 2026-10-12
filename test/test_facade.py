@@ -824,3 +824,236 @@ class TestListFilters(unittest.TestCase):
         params = _inspect.signature(DlqApi.list_dead_letters).parameters
         self.assertIn("task_name", params)
         self.assertIn("replayed", params)
+
+
+# --- 0.6.0 workflows: queue, when, fan_out, sub-workflows, timeout, retry ----
+
+from queueflow.api.workflows_api import WorkflowsApi
+from queueflow.models.create_workflow_request import CreateWorkflowRequest
+from queueflow.models.fan_out import FanOut
+from queueflow.models.step_condition import StepCondition
+from queueflow.models.workflow import Workflow
+from queueflow.models.workflow_step_state import WorkflowStepState
+
+
+def wire(body: Any) -> Dict[str, Any]:
+    """The JSON the generated client puts on the wire for ``body``."""
+    return QueueFlow("http://qf.test", "t")._client.sanitize_for_serialization(body)
+
+
+class TestWorkflowBuilderV2(unittest.TestCase):
+    def test_a_plain_step_sends_no_v2_fields(self) -> None:
+        body = wire(wf("w").step("a", "t").build())
+        self.assertEqual(
+            body,
+            {
+                "name": "w",
+                "steps": [{"name": "a", "task_name": "t", "depends_on": [], "payload": {}}],
+                "context": {},
+                "metadata": {},
+            },
+        )
+
+    def test_queue_when_and_fan_out_are_sent_in_the_wire_shape(self) -> None:
+        body = wire(
+            wf("w")
+            .step("fetch", "fetch_images", queue="images")
+            .step(
+                "resize",
+                "resize_image",
+                after=["fetch"],
+                queue="images",
+                when={"path": "fetch.flags", "op": "eq", "value": {"resize": True}},
+                fan_out={"path": "fetch.images", "item_key": "image", "max_items": 50},
+                on_failure="continue",
+            )
+            .build()
+        )
+        fetch, resize = body["steps"]
+        self.assertEqual(fetch["queue"], "images")
+        for absent in ("when", "fan_out", "workflow", "on_failure"):
+            self.assertNotIn(absent, fetch)
+        self.assertEqual(resize["when"], {"path": "fetch.flags", "op": "eq", "value": {"resize": True}})
+        self.assertEqual(resize["fan_out"], {"path": "fetch.images", "item_key": "image", "max_items": 50})
+        self.assertEqual(resize["on_failure"], "continue")
+        self.assertEqual(resize["depends_on"], ["fetch"])
+
+    def test_when_accepts_nested_all_any_not(self) -> None:
+        cond = {
+            "any": [
+                {"path": "fraud.score", "op": "exists"},
+                {
+                    "all": [
+                        {"path": "validate.total", "value": {"cents": 100000}},
+                        {"not": {"path": "customer.trusted", "op": "exists"}},
+                    ]
+                },
+            ]
+        }
+        body = wire(wf("w").step("a", "t", when=cond).build())
+        self.assertEqual(body["steps"][0]["when"], cond)
+
+    def test_when_accepts_a_generated_step_condition_as_is(self) -> None:
+        cond = StepCondition(path="seed.ok", op="exists")
+        req = wf("w").step("a", "t", when=cond).build()
+        self.assertIs(req.steps[0].when, cond)
+        self.assertEqual(wire(req)["steps"][0]["when"], {"path": "seed.ok", "op": "exists"})
+
+    def test_when_must_set_exactly_one_of_path_all_any_not(self) -> None:
+        with self.assertRaisesRegex(WorkflowValidationError, 'step "a": when: exactly one of'):
+            wf("w").step("a", "t", when={"op": "exists"})
+        with self.assertRaisesRegex(WorkflowValidationError, "exactly one of"):
+            wf("w").step("a", "t", when={"path": "x", "all": []})
+        with self.assertRaisesRegex(WorkflowValidationError, "exactly one of"):
+            wf("w").step("a", "t", when={"any": [{"path": "x", "not": {"path": "y"}}]})
+
+    def test_when_rejects_bad_shapes_locally(self) -> None:
+        with self.assertRaisesRegex(WorkflowValidationError, 'step "a": when: unknown key "paht"'):
+            wf("w").step("a", "t", when={"paht": "x"})
+        with self.assertRaisesRegex(WorkflowValidationError, 'step "a": when:'):
+            wf("w").step("a", "t", when={"path": "x", "op": "matches"})
+        with self.assertRaisesRegex(WorkflowValidationError, "all must be a list"):
+            wf("w").step("a", "t", when={"all": {"path": "x"}})
+        with self.assertRaisesRegex(WorkflowValidationError, "must be a dict or a StepCondition"):
+            wf("w").step("a", "t", when="x exists")
+
+    def test_scalar_condition_values_are_rejected_with_a_hint(self) -> None:
+        # The server's 0.6.0 spec types StepCondition.value as `object`, so the
+        # generated model cannot carry a scalar. The error must say so rather
+        # than leak a bare pydantic message.
+        with self.assertRaisesRegex(WorkflowValidationError, "JSON object"):
+            wf("w").step("a", "t", when={"path": "fraud.score", "op": "gt", "value": 0.8})
+
+    def test_fan_out_accepts_a_generated_model_and_checks_the_shape(self) -> None:
+        fan_out = FanOut(path="fetch.items")
+        self.assertIs(wf("w").step("a", "t", fan_out=fan_out).build().steps[0].fan_out, fan_out)
+        with self.assertRaisesRegex(WorkflowValidationError, 'step "a": fan_out needs a path'):
+            wf("w").step("a", "t", fan_out={"item_key": "n"})
+        with self.assertRaisesRegex(WorkflowValidationError, 'step "a": fan_out: unknown key "key"'):
+            wf("w").step("a", "t", fan_out={"path": "x", "key": "n"})
+        with self.assertRaisesRegex(WorkflowValidationError, 'step "a": fan_out:'):
+            wf("w").step("a", "t", fan_out={"path": "x", "max_items": -1})
+        with self.assertRaisesRegex(WorkflowValidationError, "must be a dict or a FanOut"):
+            wf("w").step("a", "t", fan_out="fetch.items")
+
+    def test_sub_workflow_builds_and_validates_the_child(self) -> None:
+        child = (
+            wf("fulfilment")
+            .step("pick", "pick_items", queue="warehouse")
+            .step("pack", "pack_parcel", after=["pick"], queue="warehouse")
+            .timeout_secs(1800)
+        )
+        body = wire(
+            wf("order")
+            .step("charge", "charge_payment")
+            .sub_workflow(
+                "fulfil",
+                child,
+                after=["charge"],
+                payload={"warehouse": "eu-1"},
+                on_failure="skip",
+                when={"path": "charge.ok", "op": "exists"},
+            )
+            .build()
+        )
+        step = body["steps"][1]
+        self.assertNotIn("task_name", step)
+        self.assertNotIn("fan_out", step)
+        self.assertEqual(step["depends_on"], ["charge"])
+        self.assertEqual(step["payload"], {"warehouse": "eu-1"})
+        self.assertEqual(step["on_failure"], "skip")
+        self.assertEqual(step["when"], {"path": "charge.ok", "op": "exists"})
+        self.assertEqual(step["workflow"]["name"], "fulfilment")
+        self.assertEqual(step["workflow"]["timeout_secs"], 1800)
+        self.assertEqual([s["name"] for s in step["workflow"]["steps"]], ["pick", "pack"])
+        self.assertEqual(step["workflow"]["steps"][1]["queue"], "warehouse")
+
+    def test_an_invalid_child_fails_when_the_sub_workflow_step_is_added(self) -> None:
+        with self.assertRaisesRegex(WorkflowValidationError, "dependency cycle"):
+            wf("order").sub_workflow("bad", wf("child").step("a", "t", after=["a"]))
+        with self.assertRaisesRegex(WorkflowValidationError, "has no steps"):
+            wf("order").sub_workflow("empty", wf("child"))
+
+    def test_sub_workflow_accepts_a_prebuilt_request(self) -> None:
+        child = wf("child").step("a", "t").build()
+        req = wf("parent").sub_workflow("s", child).build()
+        self.assertIs(req.steps[0].workflow, child)
+        self.assertIsNone(req.steps[0].task_name)
+
+    def test_timeout_secs_and_metadata(self) -> None:
+        req = wf("w").step("a", "t").timeout_secs(3600).metadata(app="shop").metadata(env="prod").build()
+        self.assertEqual(req.timeout_secs, 3600)
+        self.assertEqual(req.metadata, {"app": "shop", "env": "prod"})
+        self.assertEqual(wire(req)["timeout_secs"], 3600)
+        self.assertNotIn("timeout_secs", wire(wf("w").step("a", "t").build()))
+        with self.assertRaisesRegex(WorkflowValidationError, "timeout_secs must be"):
+            wf("w").timeout_secs(0)
+
+    def test_v2_steps_still_get_the_structural_checks(self) -> None:
+        builder = wf("w").step("a", "t", queue="q").sub_workflow("a", wf("c").step("x", "t"))
+        with self.assertRaisesRegex(WorkflowValidationError, 'duplicate step name "a"'):
+            builder.build()
+        builder = wf("w").sub_workflow("s", wf("c").step("x", "t"), after=["ghost"])
+        with self.assertRaisesRegex(WorkflowValidationError, 'unknown step "ghost"'):
+            builder.build()
+
+
+class FakeWorkflowsV2Api(FakeWorkflowsApi):
+    def __init__(self, statuses: Optional[List[str]] = None, steps: Optional[List[Any]] = None) -> None:
+        super().__init__(statuses)
+        self.retried: List[str] = []
+        self.steps = steps or []
+
+    def retry_workflow(self, workflow_id: str) -> None:
+        self.retried.append(workflow_id)
+
+    def get_workflow_step_states(self, workflow_id: str) -> Any:
+        return SimpleNamespace(workflow_id=workflow_id, steps=self.steps)
+
+
+class TestWorkflowsV2Methods(unittest.TestCase):
+    def test_retry_workflow_retries_then_fetches_the_record(self) -> None:
+        qf = QueueFlow("http://qf.test", "t")
+        qf.workflows = FakeWorkflowsV2Api(["running"])
+        result = qf.retry_workflow("wf-1")
+        self.assertEqual(qf.workflows.retried, ["wf-1"])
+        self.assertEqual(qf.workflows.get_calls, 1, "must fetch the refreshed record after retrying")
+        self.assertEqual(result.status, "running")
+
+    def test_workflow_steps_unwraps_the_response_and_exposes_the_v2_fields(self) -> None:
+        state = WorkflowStepState(
+            name="resize",
+            status="running",
+            job_id="job-1",
+            started_at="2026-10-11T00:00:00Z",
+            fan_out={"total": 3, "completed": 1, "failed": 0},
+        )
+        skipped = WorkflowStepState(name="review", status="skipped", error="condition not met")
+        qf = QueueFlow("http://qf.test", "t")
+        qf.workflows = FakeWorkflowsV2Api(steps=[state, skipped])
+        steps = qf.workflow_steps("wf-1")
+        self.assertEqual(steps, [state, skipped])
+        self.assertEqual((steps[0].fan_out.total, steps[0].fan_out.completed, steps[0].fan_out.failed), (3, 1, 0))
+        self.assertIsNotNone(steps[0].started_at)
+        self.assertIsNone(steps[0].completed_at)
+        self.assertIsNone(steps[0].child_workflow_id)
+        self.assertEqual(steps[1].error, "condition not met")
+
+
+class TestWorkflowsV2Models(unittest.TestCase):
+    """The README documents these generated 0.6.0 fields and operations; guard against drift."""
+
+    def test_workflows_api_has_retry_and_the_event_stream(self) -> None:
+        self.assertIn("id", _inspect.signature(WorkflowsApi.retry_workflow).parameters)
+        self.assertIn("id", _inspect.signature(WorkflowsApi.stream_workflow_events).parameters)
+
+    def test_workflow_record_carries_the_v2_fields(self) -> None:
+        for field in ("error_message", "timeout_secs", "deadline_at", "retry_count", "parent_workflow_id", "parent_step_name"):
+            self.assertIn(field, Workflow.model_fields)
+
+    def test_step_state_carries_the_v2_fields(self) -> None:
+        for field in ("error", "started_at", "completed_at", "child_workflow_id", "fan_out"):
+            self.assertIn(field, WorkflowStepState.model_fields)
+
+    def test_create_workflow_request_has_timeout_secs(self) -> None:
+        self.assertIn("timeout_secs", CreateWorkflowRequest.model_fields)

@@ -370,3 +370,224 @@ def test_bulk_replay_of_dead_letters_scoped_to_this_run(qf: QueueFlow, suffix: s
     # Nothing handles the replayed job; sweep it so the queue does not linger.
     assert qf.cancel_jobs(queue=queue, task_name=task) == 1
     assert qf.jobs.get_job(results[0].job_id).status == "cancelled"
+
+
+# --- 0.6.0 workflows: conditions, fan-out, sub-workflows, retry ----------------
+#
+# Every step below runs on a queue unique to this run, served by one worker
+# thread started for the module, so a shared server never sees these tasks on
+# a queue another suite polls. Handlers read their upstream results from the
+# `_context` the engine injects into each payload.
+
+import uuid
+
+from queueflow.exceptions import ApiException
+
+V2_QUEUE = f"py-live-{uuid.uuid4()}"
+WF_WAIT_SECS = 90.0
+
+
+@pytest.fixture(scope="module")
+def v2_worker(qf: QueueFlow):
+    attempts: Dict[str, int] = {}
+
+    def seed(job: Any) -> Dict[str, Any]:
+        return {"ok": True, "flags": {"vip": True}, "items": [3, 1, 2]}
+
+    def noop(job: Any) -> Dict[str, Any]:
+        context = (job.payload or {}).get("_context", {})
+        return {"ran": True, "saw": sorted(context)}
+
+    def square(job: Any) -> Dict[str, Any]:
+        payload = job.payload or {}
+        return {"n": payload["n"], "sq": payload["n"] ** 2, "index": payload["_index"]}
+
+    def total(job: Any) -> Dict[str, Any]:
+        results = (job.payload or {})["_context"]["square"]["results"]
+        return {"sum": sum(r["sq"] for r in results)}
+
+    def flaky(job: Any) -> Dict[str, Any]:
+        key = job.workflow_id or job.id
+        attempts[key] = attempts.get(key, 0) + 1
+        if attempts[key] == 1:
+            raise NonRetryableError("first attempt rejected on purpose")
+        return {"attempt": attempts[key]}
+
+    handlers = {"seed": seed, "noop": noop, "square": square, "total": total, "flaky": flaky}
+    stop = threading.Event()
+    worker = threading.Thread(
+        target=qf.run_worker,
+        args=(V2_QUEUE, handlers),
+        kwargs={"lease_secs": 10, "wait_secs": 20, "stop": stop, "concurrency": 4, "poll_wait_secs": 1},
+        daemon=True,
+    )
+    worker.start()
+    yield attempts
+    stop.set()
+    worker.join(timeout=30)
+    assert not worker.is_alive(), "v2 worker loop did not stop"
+
+
+def test_condition_skipped_step_still_satisfies_its_dependents(qf: QueueFlow, suffix: str, v2_worker: Any) -> None:
+    dag = (
+        wf(f"py-live-cond-{suffix}")
+        .step("seed", "seed", queue=V2_QUEUE)
+        # True: object equality against the seed result.
+        .step("vip", "noop", after=["seed"], queue=V2_QUEUE, when={"path": "seed.flags", "value": {"vip": True}})
+        # False: the path does not exist, so the step is skipped.
+        .step("gated", "noop", after=["seed"], queue=V2_QUEUE, when={"path": "seed.missing", "op": "exists"})
+        .step("after_gate", "noop", after=["gated", "vip"], queue=V2_QUEUE)
+    )
+    workflow = qf.create_workflow(dag)
+    assert workflow.steps[2].when is not None
+    assert workflow.steps[2].when.path == "seed.missing"
+    assert workflow.steps[0].queue == V2_QUEUE
+
+    finished = qf.wait_for_workflow(workflow.id, timeout=WF_WAIT_SECS, interval=POLL_SECS)
+    assert finished.status == "completed", finished.error_message
+
+    steps = {s.name: s for s in qf.workflow_steps(workflow.id)}
+    assert steps["vip"].status == "completed"
+    assert steps["gated"].status == "skipped"
+    assert steps["gated"].error == "condition not met"
+    assert steps["gated"].job_id is None
+    # Unlike a policy skip, a condition skip satisfies its dependents.
+    assert steps["after_gate"].status == "completed"
+    saw = finished.context["after_gate"]["saw"]
+    assert "seed" in saw and "vip" in saw and "gated" not in saw
+    assert "gated" not in finished.context
+    for name in ("seed", "vip", "after_gate"):
+        assert steps[name].started_at is not None, name
+        assert steps[name].completed_at is not None, name
+        assert steps[name].job_id is not None, name
+        assert steps[name].error is None, name
+
+
+def test_fan_out_runs_once_per_element_and_collects_ordered_results(qf: QueueFlow, suffix: str, v2_worker: Any) -> None:
+    dag = (
+        wf(f"py-live-fanout-{suffix}")
+        .step("seed", "seed", queue=V2_QUEUE)
+        .step("square", "square", after=["seed"], queue=V2_QUEUE, fan_out={"path": "seed.items", "item_key": "n"})
+        .step("total", "total", after=["square"], queue=V2_QUEUE)
+    )
+    workflow = qf.create_workflow(dag)
+    assert workflow.steps[1].fan_out is not None
+    assert workflow.steps[1].fan_out.item_key == "n"
+
+    finished = qf.wait_for_workflow(workflow.id, timeout=WF_WAIT_SECS, interval=POLL_SECS)
+    assert finished.status == "completed", finished.error_message
+    # Results come back in element order, whatever order the children ran in.
+    assert finished.context["square"]["results"] == [
+        {"n": 3, "sq": 9, "index": 0},
+        {"n": 1, "sq": 1, "index": 1},
+        {"n": 2, "sq": 4, "index": 2},
+    ]
+    assert finished.context["total"] == {"sum": 14}
+
+    steps = {s.name: s for s in qf.workflow_steps(workflow.id)}
+    progress = steps["square"].fan_out
+    assert progress is not None
+    assert (progress.total, progress.completed, progress.failed) == (3, 3, 0)
+    assert steps["seed"].fan_out is None
+    assert steps["square"].status == "completed"
+
+    # job_id is the first child; every child carries its index and the total.
+    first = qf.jobs.get_job(steps["square"].job_id)
+    assert first.task_name == "square"
+    assert first.queue_name == V2_QUEUE
+    assert first.workflow_id == workflow.id
+    assert first.workflow_step_id == "square"
+    assert first.metadata["fan_out_index"] == 0
+    assert first.metadata["fan_out_total"] == 3
+    children = [j for j in qf.jobs.list_jobs(queue=V2_QUEUE, task_name="square", limit=100).jobs if j.workflow_id == workflow.id]
+    assert sorted(j.metadata["fan_out_index"] for j in children) == [0, 1, 2]
+
+
+def test_sub_workflow_runs_a_child_linked_to_its_parent(qf: QueueFlow, suffix: str, v2_worker: Any) -> None:
+    child = (
+        wf(f"py-live-child-{suffix}")
+        .step("pick", "seed", queue=V2_QUEUE)
+        .step("pack", "noop", after=["pick"], queue=V2_QUEUE)
+        .timeout_secs(600)
+    )
+    dag = (
+        wf(f"py-live-parent-{suffix}")
+        .step("prep", "seed", queue=V2_QUEUE)
+        .sub_workflow("fulfil", child, after=["prep"], payload={"warehouse": "eu-1"})
+        .step("done", "noop", after=["fulfil"], queue=V2_QUEUE)
+    )
+    parent = qf.create_workflow(dag)
+    assert not parent.steps[1].task_name, "a sub-workflow step has no task (the server stores it empty)"
+    assert parent.steps[1].workflow is not None
+    assert parent.steps[1].workflow.name == child.name
+
+    finished = qf.wait_for_workflow(parent.id, timeout=WF_WAIT_SECS, interval=POLL_SECS)
+    assert finished.status == "completed", finished.error_message
+    assert finished.parent_workflow_id is None
+
+    steps = {s.name: s for s in qf.workflow_steps(parent.id)}
+    assert steps["fulfil"].status == "completed"
+    child_id = steps["fulfil"].child_workflow_id
+    assert child_id, "sub-workflow step must link its child"
+
+    child_wf = qf.workflows.get_workflow(child_id)
+    assert child_wf.status == "completed", child_wf.error_message
+    assert child_wf.parent_workflow_id == parent.id
+    assert child_wf.parent_step_name == "fulfil"
+    assert child_wf.timeout_secs == 600
+    assert child_wf.deadline_at is not None
+    # Child context: its own results, the step payload, and the parent under _parent.
+    assert child_wf.context["warehouse"] == "eu-1"
+    assert child_wf.context["_parent"]["prep"]["ok"] is True
+    assert child_wf.context["pick"]["ok"] is True
+    assert "_parent" in child_wf.context["pack"]["saw"]
+    # The step's result is the child's final context.
+    assert finished.context["fulfil"]["pack"]["ran"] is True
+    assert finished.context["fulfil"]["warehouse"] == "eu-1"
+    assert "fulfil" in finished.context["done"]["saw"]
+
+
+def test_retry_reruns_a_failed_workflow_from_where_it_stopped(qf: QueueFlow, suffix: str, v2_worker: Any) -> None:
+    dag = (
+        wf(f"py-live-retry-{suffix}")
+        .step("seed", "seed", queue=V2_QUEUE)
+        .step("flaky", "flaky", after=["seed"], queue=V2_QUEUE)
+        .step("after", "noop", after=["flaky"], queue=V2_QUEUE)
+        .timeout_secs(900)
+    )
+    workflow = qf.create_workflow(dag)
+    assert workflow.timeout_secs == 900
+    assert workflow.deadline_at is not None
+    assert workflow.retry_count == 0
+
+    # The first flaky attempt is a non-retryable failure; halt cancels the rest.
+    failed = qf.wait_for_workflow(workflow.id, timeout=WF_WAIT_SECS, interval=POLL_SECS)
+    assert failed.status == "failed"
+    assert failed.error_message and "first attempt rejected" in failed.error_message
+    steps = {s.name: s for s in qf.workflow_steps(workflow.id)}
+    assert steps["seed"].status == "completed"
+    assert steps["flaky"].status == "failed"
+    assert steps["flaky"].error and "first attempt rejected" in steps["flaky"].error
+    assert steps["after"].status == "cancelled"
+    seed_job = steps["seed"].job_id
+
+    retried = qf.retry_workflow(workflow.id)
+    assert retried.status != "failed"
+    assert retried.error_message is None
+    assert retried.retry_count == 1
+    assert retried.deadline_at is not None and retried.deadline_at >= workflow.deadline_at
+
+    finished = qf.wait_for_workflow(workflow.id, timeout=WF_WAIT_SECS, interval=POLL_SECS)
+    assert finished.status == "completed", finished.error_message
+    assert finished.context["flaky"] == {"attempt": 2}
+    assert finished.context["seed"]["ok"] is True
+    assert v2_worker[workflow.id] == 2, "flaky ran exactly twice"
+    steps = {s.name: s for s in qf.workflow_steps(workflow.id)}
+    assert all(s.status == "completed" for s in steps.values()), steps
+    assert steps["seed"].job_id == seed_job, "completed steps keep their state across a retry"
+    assert steps["flaky"].error is None
+
+    # Retrying a completed workflow is a 409.
+    with pytest.raises(ApiException) as excinfo:
+        qf.retry_workflow(workflow.id)
+    assert excinfo.value.status == 409

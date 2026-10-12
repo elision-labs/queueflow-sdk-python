@@ -96,26 +96,92 @@ while qf.cancel_jobs(queue="orders", task_name="send_email", limit=500) == 500:
 | `qf.create_workflow(builder_or_request)` | Create a workflow from a `wf()` builder or a raw `CreateWorkflowRequest`. |
 | `qf.wait_for_workflow(workflow_id, timeout=60.0, interval=0.5)` | Poll until a terminal workflow state. |
 | `qf.workflows.get_workflow(id)` / `list_workflows(...)` / `cancel_workflow(id)` | Fetch / list / cancel. |
-| `qf.workflows.get_workflow_step_states(id)` | Runtime status of every step, in declaration order. |
+| `qf.workflow_steps(workflow_id)` | Live progress of every step, in declaration order: `name`, `status`, `job_id` (the first child, for a fan-out), `error` (`condition not met` for a step skipped by its `when`), `started_at`, `completed_at`, `child_workflow_id` (sub-workflow steps) and `fan_out` (`total`, `completed`, `failed`). |
+| `qf.retry_workflow(workflow_id)` | Re-run a `failed`, `partially_failed` or `cancelled` workflow from where it stopped and return its refreshed record (server 0.6.0). A running or completed workflow is a 409. |
+| `qf.workflows.get_workflow_step_states(id)` | The raw step-states call behind `qf.workflow_steps`. |
 | `qf.workflows.get_workflow_diagram(id)` | Mermaid (`graph TD`) diagram of the DAG. |
+
+The `Workflow` record carries `status`, the accumulated `context` (step results keyed by step name),
+the step definitions and, from server 0.6.0, `error_message`, `timeout_secs` and `deadline_at`,
+`retry_count`, and `parent_workflow_id` / `parent_step_name` on a child spawned by a sub-workflow
+step.
+
+`retry_workflow` sends every step that did not complete (failed, cancelled, or skipped by a failure
+policy) back to `pending`; completed steps and condition-skipped steps keep their results and do not
+run again. The workflow becomes `running`, its `error_message` clears, `retry_count` increments and
+the deadline, if any, is re-armed from the original `timeout_secs`. Fix the cause first: a retry
+with the same inputs fails the same way.
 
 ### Workflow builder
 
 ```python
 from queueflow.facade import wf
 
+fulfilment = (
+    wf("fulfilment")
+    .step("pick", "pick_items", queue="warehouse")
+    .step("pack", "pack_parcel", after=["pick"], queue="warehouse")
+    .timeout_secs(1800)
+)
+
 dag = (
     wf("order_123")
-    .step("validate", "validate_order")
-    .step("pay", "process_payment", after=["validate"])
-    .step("ship", "create_shipment", after=["pay"], on_failure="continue")
+    .step("validate", "validate_order", payload={"order_id": 123})
+    .step("charge", "charge_payment", after=["validate"])
+    .step("fraud", "fraud_check", after=["validate"], on_failure="halt")
+    .step("review", "queue_for_review", after=["fraud"],
+          when={"path": "fraud.flags", "op": "eq", "value": {"manual": True}})
+    .step("resize", "resize_image", after=["validate"], queue="images", on_failure="continue",
+          fan_out={"path": "validate.images", "item_key": "image"})
+    .sub_workflow("fulfil", fulfilment, after=["charge", "fraud"], payload={"warehouse": "eu-1"})
+    .step("confirm", "send_confirmation", after=["fulfil"], on_failure="skip")
     .context(source="web")
+    .metadata(app="shop")
+    .timeout_secs(3600)
 )
-# .build() runs locally first: duplicate names, dangling deps, and cycles raise
-# WorkflowValidationError before any network round-trip.
+# .build() runs locally first: duplicate names, dangling deps, cycles, and malformed
+# when / fan_out shapes raise WorkflowValidationError before any network round-trip.
 ```
 
-`step()` also accepts `payload=`, `on_success=`, and `config=` (a `models.JobConfig` override).
+| Builder method | Description |
+| --- | --- |
+| `step(name, task, after=None, payload=None, on_failure=None, on_success=None, config=None, queue=None, when=None, fan_out=None)` | A task step. `config` is a `models.JobConfig` override; `on_failure` is `halt` (default), `skip` or `continue`. |
+| `sub_workflow(name, child, after=None, payload=None, on_failure=None, on_success=None, when=None)` | A step that runs `child` (a `wf()` builder, built and validated here, or a `CreateWorkflowRequest`) as an inline child workflow instead of a task. |
+| `context(**kwargs)` / `metadata(**kwargs)` | Seed the shared context / store bookkeeping JSON on the workflow. Both accumulate across calls. |
+| `timeout_secs(secs)` | Whole-workflow deadline. When it passes, every unfinished step is cancelled and the workflow ends `failed` with `error_message` `workflow timed out after <secs>s`. |
+| `build()` | Validate locally and return the `CreateWorkflowRequest`; `qf.create_workflow` calls it for you. |
+
+`queue`, `when`, `fan_out`, `sub_workflow` and `timeout_secs` need server 0.6.0 or later.
+
+**Queues.** `queue=` puts the step's job(s) on that queue (the server's default queue when
+omitted), so a step can be routed to the workers that know its task.
+
+**Conditions.** `when=` gates a step on the workflow context at the moment it becomes ready. It
+takes a dict in the wire shape or a `models.StepCondition`. A leaf names a dotted `path` (step
+results live under their step name, so `validate.ok` is the `ok` key of `validate`'s result) and
+compares the value there with `value` using `op`: `eq` (default with a value), `ne`, `gt`, `gte`,
+`lt`, `lte`, `exists` (default without a value), `contains`, `in`. `{"all": [...]}`,
+`{"any": [...]}` and `{"not": {...}}` combine leaves. A false condition marks the step `skipped`
+with the error `condition not met`; unlike a step skipped by a failure policy, its dependents still
+run, simply without a result for it in `_context`. With this release a leaf's `value` must be a JSON
+object (see [Known limitations](#known-limitations)); `exists` needs no value.
+
+**Fan-out.** `fan_out=` (`{"path": ..., "item_key": "item", "max_items": 10000}`, or a
+`models.FanOut`) runs the task once per element of the array at `path`, all children created in one
+atomic claim and run concurrently across the queue's workers, each with its own retries. A child's
+payload is the step payload plus the element under `item_key` and its position under `_index`; its
+metadata carries `fan_out_index` and `fan_out_total`. The step completes with the result
+`{"results": [r0, r1, ...]}` in element order (`_context.<step>.results` downstream); a failed child
+follows the step's `on_failure`. The step state's `fan_out` reports `total`, `completed` and
+`failed`, and its `job_id` is the first child.
+
+**Sub-workflows.** `sub_workflow()` runs the child as a workflow of its own, in the same tenant,
+with `parent_workflow_id` and `parent_step_name` set; the parent's step state carries its
+`child_workflow_id`. The child's context is its declared `context`, then the step's `payload`, then
+the parent's whole context under `_parent`. A completed child completes the step with the child's
+final context as the step result; a failed, partially failed or cancelled child fails the step under
+its `on_failure`. Cancelling or timing out the parent cancels a running child. Children nest up to
+8 levels and carry their own step `queue`s.
 
 ### Worker
 
@@ -292,11 +358,19 @@ except ApiException as err:
     print(err.status, err.body)
 ```
 
-## Known limitation: `stream_job_events`
+## Known limitations
 
-`JobsApi.stream_job_events` cannot stream: it buffers the whole SSE response until the server
-closes it (terminal status or the 15-minute cap). Use `wait_for_job` (polling) instead, or the
-`stream_job_events_without_preload_content` variant with a hand-rolled SSE parser.
+**SSE streams buffer.** `JobsApi.stream_job_events` and `WorkflowsApi.stream_workflow_events`
+cannot stream: the generated client buffers the whole SSE response until the server closes it
+(terminal status or the 15-minute cap). Use `wait_for_job` / `wait_for_workflow` (polling) instead,
+or the `*_without_preload_content` variants with a hand-rolled SSE parser.
+
+**Condition values must be JSON objects.** The server's 0.6.0 OpenAPI spec types
+`StepCondition.value` as `object`, so the generated `models.StepCondition` rejects a scalar or array
+`value` (`when={"path": "fraud.score", "op": "gt", "value": 0.8}` raises `WorkflowValidationError`
+locally, and a workflow created with such a condition through another client cannot be fetched with
+this SDK). `exists` needs no value, and `eq` / `ne` / `contains` work with object values. A spec fix
+on the server side lifts the restriction in a later release.
 
 ## Conformance tests
 
@@ -305,8 +379,11 @@ closes it (terminal status or the 15-minute cap). Use `wait_for_job` (polling) i
 and waits on an `echo` job, checks idempotent re-creation, runs a two-step workflow, exercises the
 cron and dead-letter endpoints, reads stats, runs `run_worker` against a dedicated queue, and
 exercises `whoami`, bulk cancel, queue pause/resume and bulk dead-letter replay, each scoped to a
-queue unique to the run. The tests are marked `live` and skip themselves unless `QUEUEFLOW_URL` is
-set, so plain `pytest` and CI stay offline.
+queue unique to the run. Against a 0.6.0 server it also runs its own worker on a run-unique queue
+to cover a condition-skipped step whose dependents still run, a fan-out with ordered results and
+progress counts, a sub-workflow child linked to its parent, and a retry after a non-retryable
+failure. The tests are marked `live` and skip themselves unless `QUEUEFLOW_URL` is set, so plain
+`pytest` and CI stay offline.
 
 ```bash
 QUEUEFLOW_URL=http://localhost:8000 \

@@ -3,6 +3,7 @@ docs/BackoffStrategy.md
 docs/CancelJobsRequest.md
 docs/CancelJobsResponse.md
 docs/CompleteJobRequest.md
+docs/ConditionOp.md
 docs/CreateBatchJobsRequest.md
 docs/CreateBatchJobsResponse.md
 docs/CreateCronRequest.md
@@ -17,6 +18,8 @@ docs/DeadLetter.md
 docs/DlqApi.md
 docs/ErrorBody.md
 docs/FailJobRequest.md
+docs/FanOut.md
+docs/FanOutProgress.md
 docs/HealthApi.md
 docs/HealthStatus.md
 docs/HeartbeatRequest.md
@@ -44,6 +47,7 @@ docs/ReplayDeadLettersRequest.md
 docs/ReplayDeadLettersResponse.md
 docs/ReplayedDeadLetter.md
 docs/StatsSnapshot.md
+docs/StepCondition.md
 docs/StepStatus.md
 docs/SystemApi.md
 docs/TasksResponse.md
@@ -51,6 +55,7 @@ docs/WhoAmIResponse.md
 docs/WorkerApi.md
 docs/Workflow.md
 docs/WorkflowDiagramResponse.md
+docs/WorkflowEvent.md
 docs/WorkflowStatus.md
 docs/WorkflowStep.md
 docs/WorkflowStepState.md
@@ -75,6 +80,7 @@ queueflow/models/backoff_strategy.py
 queueflow/models/cancel_jobs_request.py
 queueflow/models/cancel_jobs_response.py
 queueflow/models/complete_job_request.py
+queueflow/models/condition_op.py
 queueflow/models/create_batch_jobs_request.py
 queueflow/models/create_batch_jobs_response.py
 queueflow/models/create_cron_request.py
@@ -87,6 +93,8 @@ queueflow/models/cron_schedule.py
 queueflow/models/dead_letter.py
 queueflow/models/error_body.py
 queueflow/models/fail_job_request.py
+queueflow/models/fan_out.py
+queueflow/models/fan_out_progress.py
 queueflow/models/health_status.py
 queueflow/models/heartbeat_request.py
 queueflow/models/heartbeat_response.py
@@ -112,11 +120,13 @@ queueflow/models/replay_dead_letters_request.py
 queueflow/models/replay_dead_letters_response.py
 queueflow/models/replayed_dead_letter.py
 queueflow/models/stats_snapshot.py
+queueflow/models/step_condition.py
 queueflow/models/step_status.py
 queueflow/models/tasks_response.py
 queueflow/models/who_am_i_response.py
 queueflow/models/workflow.py
 queueflow/models/workflow_diagram_response.py
+queueflow/models/workflow_event.py
 queueflow/models/workflow_status.py
 queueflow/models/workflow_step.py
 queueflow/models/workflow_step_state.py
@@ -132,6 +142,7 @@ test/test_backoff_strategy.py
 test/test_cancel_jobs_request.py
 test/test_cancel_jobs_response.py
 test/test_complete_job_request.py
+test/test_condition_op.py
 test/test_create_batch_jobs_request.py
 test/test_create_batch_jobs_response.py
 test/test_create_cron_request.py
@@ -146,6 +157,8 @@ test/test_dead_letter.py
 test/test_dlq_api.py
 test/test_error_body.py
 test/test_fail_job_request.py
+test/test_fan_out.py
+test/test_fan_out_progress.py
 test/test_health_api.py
 test/test_health_status.py
 test/test_heartbeat_request.py
@@ -173,6 +186,7 @@ test/test_replay_dead_letters_request.py
 test/test_replay_dead_letters_response.py
 test/test_replayed_dead_letter.py
 test/test_stats_snapshot.py
+test/test_step_condition.py
 test/test_step_status.py
 test/test_system_api.py
 test/test_tasks_response.py
@@ -180,6 +194,7 @@ test/test_who_am_i_response.py
 test/test_worker_api.py
 test/test_workflow.py
 test/test_workflow_diagram_response.py
+test/test_workflow_event.py
 test/test_workflow_status.py
 test/test_workflow_step.py
 test/test_workflow_step_state.py
